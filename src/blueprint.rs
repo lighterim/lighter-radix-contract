@@ -44,9 +44,6 @@ mod lighter_radix{
         ///
         /// payment window epoch
         payment_window_epochs: u16,
-        ///
-        /// 
-        escrow_id_counter: u64,
 
         admin_rule: AccessRule,
         op_rule: AccessRule
@@ -126,7 +123,6 @@ mod lighter_radix{
                 ticket_vault: Vault::new(XRD),
                 escrow_vault: NonFungibleVault::new(escrow_res_mgr.address()),
                 ticket_id_counter: 1,
-                escrow_id_counter: 1,
                 relay_public_key,
                 channel_price,
                 ticket_res_mgr,
