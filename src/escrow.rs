@@ -1,5 +1,16 @@
 use scrypto::prelude::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ScryptoSbor, ManifestSbor)]
+pub enum Instruction {
+    Escrowed,
+    BuyerPaid,
+    Release,
+    SellerRequestCancel,
+    SellerCancel,
+    Resolve
+}
+
+
 #[derive(ScryptoSbor, Clone, Debug, PartialEq, Eq, NonFungibleData)]
 pub struct EscrowData {
     // pub trade_id: u64,
@@ -10,6 +21,7 @@ pub struct EscrowData {
     // pub volume: Decimal, // as seller. trade.volume = amount * (1-sell fee rate)
     // pub buyer_fee_rate: Decimal,
     // pub seller_fee_rate: Decimal,
+    pub instruction: Instruction,
     pub cancel_after_epoch_by_seller: u64,
     pub gas_spent_by_relayer: Decimal
 }

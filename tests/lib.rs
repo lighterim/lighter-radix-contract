@@ -1,4 +1,4 @@
-use scrypto::info;
+use scrypto::prelude::*;
 use scrypto_test::prelude::*;
 
 use lighter_radix_contract::blueprint::lighter_radix_test;
@@ -34,9 +34,9 @@ fn test_take_ticket() {
     );
     println!("{:?}\n", receipt);
     // info!("{}\n", receipt);
-    let result = receipt.expect_commit(true);
-    let component = result.new_component_addresses()[0];
-    let ticket_bucket = result.new_resource_addresses()[0];
+    let comp_result = receipt.expect_commit(true);
+    let component = comp_result.new_component_addresses()[0];
+    // let ticket_bucket = comp_result.new_resource_addresses()[0];
 
     let builder = ManifestBuilder::new();
     // let bucket = builder.generate_bucket_name("bucket");
@@ -45,31 +45,19 @@ fn test_take_ticket() {
     .withdraw_from_account(account, XRD, Decimal::from(20))
     .take_from_worktop(XRD, price, "bucket1")
     .with_name_lookup(|bld, lookup|{
-        bld.call_method(component, "take_ticket", manifest_args!("abc", lookup.bucket("bucket1")),)
+        bld.call_method(component, "take_ticket", manifest_args!("buyer@lighter.im", lookup.bucket("bucket1")),)
     })
     .call_method(account, "deposit_batch", manifest_args!(ManifestExpression::EntireWorktop))
     .build();
     let receipt = ledger.execute_manifest(manifest, vec![NonFungibleGlobalId::from_public_key(&public_key)]);
+    let buyer_result = receipt.expect_commit(true);
+    // let buyer = buyer_result.new_resource_addresses()[0];
 
-    // Test the `free_token` method.
-    // let manifest = ManifestBuilder::new()
-    //     .lock_fee_from_faucet()
-    //     .call_method(component, "free_token", manifest_args!())
-    //     .call_method(
-    //         account,
-    //         "deposit_batch",
-    //         manifest_args!(ManifestExpression::EntireWorktop),
-    //     )
-    //     .build();
-    // let receipt = ledger.execute_manifest(
-    //     manifest,
-    //     vec![NonFungibleGlobalId::from_public_key(&public_key)],
-    // );
     
-    println!("{:?}\n", receipt);
+    // println!("{:?}\n {}\n", receipt, Runtime::bech32_encode_address(buyer));
     // info!("{}\n", receipt);
     // receipt.expect_commit_success();
-    receipt.expect_commit(true);
+    // receipt.expect_commit(true);
 }
 
 #[test]

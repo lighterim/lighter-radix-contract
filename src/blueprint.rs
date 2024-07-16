@@ -1,11 +1,10 @@
 use scrypto::prelude::*;
 use crate::ticket::TicketData;
-use crate::escrow::EscrowData;
+use crate::escrow::*;
 
 #[blueprint]
-// #[events(SupplyEvent, WithdrawEvent, CreateCDPEvent, ExtendBorrowEvent, AdditionCollateralEvent, WithdrawCollateralEvent, RepayEvent, LiquidationEvent)]
+#[events(TakeTicketEvent, CreateEscrowEvent, BuyerPaidEvent, SellerReleasedEvent, SellerRequestCancelEvent)]
 mod lighter_radix{
-    
     enable_method_auth! {
         roles{
             admin => updatable_by: [];
@@ -14,8 +13,11 @@ mod lighter_radix{
         methods {
             // new_pool => restrict_to: [admin, OWNER];
             take_ticket => PUBLIC;
-            update_nostr_pub_key => PUBLIC;
             create_escrow => PUBLIC;
+            buyer_paid => PUBLIC;
+            seller_release => PUBLIC;
+            seller_request_cancel => PUBLIC;
+            seller_cancel => PUBLIC;
         }
     }
 
@@ -33,14 +35,17 @@ mod lighter_radix{
         /// ticket vault
         ticket_vault: Vault,
         ///
-        /// integer id of Ticket NFT.
-        ticket_id_counter: u64,
-        ///
         /// ResourceManager of escrow NFT.
         escrow_res_mgr: ResourceManager,
         ///
         /// escrow NFT vault
-        escrow_vault: NonFungibleVault,
+        escrow_nft_vault: NonFungibleVault,
+        ///
+        /// asset vault by escrow
+        escrow_vault_map: KeyValueStore<ResourceAddress, Vault>,
+        ///
+        /// credit for buyer
+        user_credit: KeyValueStore<ResourceAddress, KeyValueStore<NonFungibleLocalId, Decimal>>,
         ///
         /// payment window epoch
         payment_window_epochs: u16,
@@ -78,7 +83,7 @@ mod lighter_radix{
             let (address_reservation, component_address) =
             Runtime::allocate_component_address(Lighter::blueprint_id());
 
-            let ticket_res_mgr = ResourceBuilder::new_integer_non_fungible::<TicketData>(OwnerRole::None)
+            let ticket_res_mgr = ResourceBuilder::new_string_non_fungible::<TicketData>(OwnerRole::None)
                 .metadata(metadata!(init{
                     "symbol" => "LTT", locked;
                     "name" => "Lighter Ticket Token", locked;
@@ -97,7 +102,7 @@ mod lighter_radix{
                 ))
                 .create_with_no_initial_supply();
 
-            let escrow_res_mgr = ResourceBuilder::new_integer_non_fungible::<EscrowData>(OwnerRole::None)
+            let escrow_res_mgr = ResourceBuilder::new_bytes_non_fungible::<EscrowData>(OwnerRole::None)
                 .metadata(metadata!(init{
                     "symbol" => "ESCR", locked;
                     "name" => "Lighter Escrow Token", locked;
@@ -121,8 +126,9 @@ mod lighter_radix{
                 admin_rule: rule!(require(admin_badge_addr)),
                 op_rule: rule!(require(op_badge_addr)),
                 ticket_vault: Vault::new(XRD),
-                escrow_vault: NonFungibleVault::new(escrow_res_mgr.address()),
-                ticket_id_counter: 1,
+                escrow_nft_vault: NonFungibleVault::new(escrow_res_mgr.address()),
+                escrow_vault_map: KeyValueStore::new(),
+                user_credit: KeyValueStore::new(),
                 relay_public_key,
                 channel_price,
                 ticket_res_mgr,
@@ -136,14 +142,14 @@ mod lighter_radix{
                 operator => rule!(require(op_badge_addr));
             })
             .globalize();
-            
+            // info!("xxxx");
             (component, admin_badge.into(), op_badge.into())
             
         }
 
         ///
         /// take an Lighter NFT with a nostr public key.
-        pub fn take_ticket(&mut self, nostr_pub_key: String, mut bucket: Bucket) -> (Bucket, Bucket){
+        pub fn take_ticket(&mut self, nostr_nip_05: String, mut bucket: Bucket) -> (Bucket, Bucket){
             assert!(bucket.resource_address() == XRD && bucket.amount() >= self.channel_price, "unknow resource bucket or invalid amount");
             // assert!(true, "nostr public key invalid");
 
@@ -166,50 +172,286 @@ mod lighter_radix{
                 volume_as_buyer: Decimal::ZERO,
                 volume_as_seller: Decimal::ZERO,
                 channel_price: price,
-                nostr_pub_key,
                 deposit_amount
             };
-            
+
+            error!("nostr_nip_05:{}, processed_order_cnt:{},", nostr_nip_05.clone(), processed_order_cnt);
+            // let ticket_id = NonFungibleLocalId::String(StringNonFungibleLocalId::new(nostr_nip_05.clone()).unwrap());
             let ticket = self.ticket_res_mgr.mint_non_fungible(
-                &NonFungibleLocalId::from(self.ticket_id_counter),
+                &NonFungibleLocalId::string(nostr_nip_05.clone()).ok().unwrap(),
                 data
             );
-            self.ticket_id_counter += 1;
+            Runtime::emit_event(TakeTicketEvent{
+                channel_count: processed_order_cnt,
+                nostr_nip_05: nostr_nip_05.clone()
+            });
             (ticket,bucket)
-        }
-
-        pub fn update_nostr_pub_key(&self, nostr_pub_key: String, bucket: NonFungibleBucket) -> NonFungibleBucket{
-            let nft_id = bucket.non_fungible_local_id();
-            // let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(&nft_id);
-            self.ticket_res_mgr.update_non_fungible_data(&nft_id, "nostr_pub_key", nostr_pub_key);
-            bucket
         }
     
         pub fn create_escrow(
             &mut self, 
             trade_id: u64,
-            buyer: NonFungibleLocalId, 
-            volume: Decimal, 
+            buyer: NonFungibleLocalId,
+            price: Decimal, 
+            fee: Decimal,
+            payment_method: String,
+            signature: String,
+            seller_ticket: NonFungibleBucket,
+            token_bucket: Bucket
+        ) -> NonFungibleLocalId{
+            let volume = token_bucket.amount();
+            let token_addr = token_bucket.resource_address();
+            let seller = seller_ticket.non_fungible_local_id();
+            let args = format!("{},{},{},{},{},{},{},{}", trade_id, buyer, seller, Runtime::bech32_encode_address(token_addr), volume, price, fee, payment_method.clone());
+            let h =  keccak256_hash(args);
+            let sig = Ed25519Signature::from_str(&signature).unwrap();
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+
+            if self.escrow_vault_map.get(&token_addr).is_some(){
+                self.escrow_vault_map.get_mut(&token_addr).unwrap().put(token_bucket);
+            }
+            else{
+                self.escrow_vault_map.insert(token_addr, Vault::with_bucket(token_bucket));
+            }
+
+            let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
+            let escrow_data = EscrowData{
+                instruction: Instruction::Escrowed,
+                cancel_after_epoch_by_seller: Runtime::current_epoch().number() + (self.payment_window_epochs as u64),
+                gas_spent_by_relayer: Decimal::ZERO
+            };
+            self.escrow_nft_vault.put(
+                self.escrow_res_mgr.mint_non_fungible(&escrow_nft_id, escrow_data).as_non_fungible()
+            );
+            Runtime::emit_event(CreateEscrowEvent{
+                payment_method:payment_method.clone(),
+                escrow_id: escrow_nft_id.clone(),
+                token_addr,
+                trade_id,
+                buyer,
+                seller,
+                price,
+                volume,
+                fee
+            });
+            escrow_nft_id
+        }
+
+        pub fn buyer_paid(&mut self, 
+            trade_id: u64,
+            seller: NonFungibleLocalId,
+            token_addr: ResourceAddress,
+            volume: Decimal,
+            price: Decimal, 
+            fee: Decimal,
+            payment_method: String,
+            signature: String,
+            buyer_ticket: NonFungibleBucket
+        ) -> NonFungibleBucket {
+            let buyer = buyer_ticket.non_fungible_local_id();
+            let args = format!("{},{},{},{},{},{},{},{}", trade_id, buyer, seller, Runtime::bech32_encode_address(token_addr), volume, price, fee, payment_method);
+            let h =  keccak256_hash(args);
+            let sig = Ed25519Signature::from_str(&signature).unwrap();
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
+            // let escrow_bucket = self.escrow_nft_vault.take_non_fungible(&escrow_nft_id);
+            // escrow_bucket.take(amount)
+            let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
+            assert!(escrow_data.instruction == Instruction::Escrowed || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to BuyerPaid!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::BuyerPaid);
+            Runtime::emit_event(BuyerPaidEvent{
+                payment_method:payment_method.clone(),
+                escrow_id: escrow_nft_id.clone(),
+                token_addr,
+                trade_id,
+                buyer,
+                seller,
+                price,
+                volume,
+                fee
+            });
+            buyer_ticket
+        }
+
+        pub fn seller_release(&mut self, 
+            trade_id: u64,
+            buyer: NonFungibleLocalId,
+            token_addr: ResourceAddress,
+            volume: Decimal,
             price: Decimal, 
             fee: Decimal,
             payment_method: String,
             signature: String,
             seller_ticket: NonFungibleBucket
-        ) -> NonFungibleLocalId{
+        ) -> NonFungibleBucket{
             let seller = seller_ticket.non_fungible_local_id();
-            let args = format!("{},{},{},{},{},{},{}", trade_id, buyer, seller, volume, price, fee, payment_method);
+            let args = format!("{},{},{},{},{},{},{},{}", trade_id, buyer, seller, Runtime::bech32_encode_address(token_addr), volume, price, fee, payment_method);
             let h =  keccak256_hash(args);
             let sig = Ed25519Signature::from_str(&signature).unwrap();
             assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
-            let escrow_data = EscrowData{
-                cancel_after_epoch_by_seller: Runtime::current_epoch().number() + (self.payment_window_epochs as u64),
-                gas_spent_by_relayer: Decimal::ZERO
-            };
-            self.escrow_vault.put(
-                self.escrow_res_mgr.mint_non_fungible(&escrow_nft_id, escrow_data).as_non_fungible()
-            );
-            escrow_nft_id
+            // let escrow_bucket = self.escrow_nft_vault.take_non_fungible(&escrow_nft_id);
+            // escrow_bucket.take(amount)
+            let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
+            assert!(escrow_data.instruction == Instruction::Escrowed || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to BuyerPaid!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::Release);
+            //TODO: 为买家计帐
+            Runtime::emit_event(SellerReleasedEvent{
+                payment_method:payment_method.clone(),
+                escrow_id: escrow_nft_id.clone(),
+                token_addr,
+                trade_id,
+                buyer,
+                seller,
+                price,
+                volume,
+                fee
+            });
+            seller_ticket
+        }
+
+        pub fn seller_request_cancel(&mut self, 
+            trade_id: u64,
+            buyer: NonFungibleLocalId,
+            token_addr: ResourceAddress,
+            volume: Decimal,
+            price: Decimal, 
+            fee: Decimal,
+            payment_method: String,
+            signature: String,
+            seller_ticket: NonFungibleBucket
+        ) -> NonFungibleBucket{
+            let seller = seller_ticket.non_fungible_local_id();
+            let args = format!("{},{},{},{},{},{},{},{}", trade_id, buyer, seller, Runtime::bech32_encode_address(token_addr), volume, price, fee, payment_method);
+            let h =  keccak256_hash(args);
+            let sig = Ed25519Signature::from_str(&signature).unwrap();
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            
+            let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
+            let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
+            let current_epoch = Runtime::current_epoch().number();
+            assert!(escrow_data.instruction == Instruction::Escrowed && escrow_data.cancel_after_epoch_by_seller <= current_epoch , "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::SellerRequestCancel);
+            self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "cancel_after_epoch_by_seller", current_epoch + (self.payment_window_epochs as u64));
+            Runtime::emit_event(SellerRequestCancelEvent{
+                payment_method:payment_method.clone(),
+                escrow_id: escrow_nft_id.clone(),
+                token_addr,
+                trade_id,
+                buyer,
+                seller,
+                price,
+                volume,
+                fee
+            });
+
+            seller_ticket
+        }
+
+        pub fn seller_cancel(&mut self, 
+            trade_id: u64,
+            buyer: NonFungibleLocalId,
+            token_addr: ResourceAddress,
+            volume: Decimal,
+            price: Decimal, 
+            fee: Decimal,
+            payment_method: String,
+            signature: String,
+            seller_ticket: NonFungibleBucket
+        ) -> NonFungibleBucket{
+            let seller = seller_ticket.non_fungible_local_id();
+            let args = format!("{},{},{},{},{},{},{},{}", trade_id, buyer, seller, Runtime::bech32_encode_address(token_addr), volume, price, fee, payment_method);
+            let h =  keccak256_hash(args);
+            let sig = Ed25519Signature::from_str(&signature).unwrap();
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            
+            let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
+            let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
+            let current_epoch = Runtime::current_epoch().number();
+            assert!(escrow_data.instruction == Instruction::SellerRequestCancel && escrow_data.cancel_after_epoch_by_seller <= current_epoch , "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::SellerCancel);
+            Runtime::emit_event(SellerCancelEvent{
+                payment_method:payment_method.clone(),
+                escrow_id: escrow_nft_id.clone(),
+                token_addr,
+                trade_id,
+                buyer,
+                seller,
+                price,
+                volume,
+                fee
+            });
+            seller_ticket
         }
     }
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct TakeTicketEvent{
+    nostr_nip_05: String,
+    channel_count: Decimal
+} 
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct CreateEscrowEvent{
+    trade_id: u64,
+    buyer: NonFungibleLocalId,
+    seller: NonFungibleLocalId,
+    token_addr: ResourceAddress,
+    price: Decimal,
+    volume: Decimal,
+    fee: Decimal,
+    payment_method: String,
+    escrow_id: NonFungibleLocalId
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct BuyerPaidEvent{
+    trade_id: u64,
+    buyer: NonFungibleLocalId,
+    seller: NonFungibleLocalId,
+    token_addr: ResourceAddress,
+    price: Decimal,
+    volume: Decimal,
+    fee: Decimal,
+    payment_method: String,
+    escrow_id: NonFungibleLocalId
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct SellerReleasedEvent{
+    trade_id: u64,
+    buyer: NonFungibleLocalId,
+    seller: NonFungibleLocalId,
+    token_addr: ResourceAddress,
+    price: Decimal,
+    volume: Decimal,
+    fee: Decimal,
+    payment_method: String,
+    escrow_id: NonFungibleLocalId
+}
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct SellerRequestCancelEvent{
+    trade_id: u64,
+    buyer: NonFungibleLocalId,
+    seller: NonFungibleLocalId,
+    token_addr: ResourceAddress,
+    price: Decimal,
+    volume: Decimal,
+    fee: Decimal,
+    payment_method: String,
+    escrow_id: NonFungibleLocalId
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct SellerCancelEvent{
+    trade_id: u64,
+    buyer: NonFungibleLocalId,
+    seller: NonFungibleLocalId,
+    token_addr: ResourceAddress,
+    price: Decimal,
+    volume: Decimal,
+    fee: Decimal,
+    payment_method: String,
+    escrow_id: NonFungibleLocalId
 }
