@@ -1,0 +1,18 @@
+CALL_METHOD
+    Address("${admin_account}")
+    "lock_fee"
+    Decimal("10")
+;
+CALL_FUNCTION
+    Address("${pkg}")
+    "Lighter"
+    "instantiate"
+    Decimal("${ticket_price}")
+    ${payment_window_epochs}u16
+    "${pub_key}"
+;
+CALL_METHOD
+    Address("${admin_account}")
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP")
+;
