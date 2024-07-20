@@ -38,7 +38,8 @@ export pkg=$(echo $result | awk -F ": " '{print $2}')
 
 export ticket_price=10
 export payment_window_epochs=8
-export pub_key="6d187b0f2e66d74410e92e2dc92a5141a55c241646ce87acbcad4ab413170f9b"
+export relay_pub_key="6d187b0f2e66d74410e92e2dc92a5141a55c241646ce87acbcad4ab413170f9b"
+export domain_name="@lighter.im"
 result=$(resim run < ./manifest/replace_holder.sh ./manifest/instantiate.rtm)
 export component=$(echo $result | grep "Component: "| awk -F "Component: " '{print $2}' | awk -F " " '{print $1}')
 export admin_badge=$(echo $result | grep "Resource: " | awk -F "Resource: " '{if (NR==1) print $2}' | awk -F " " '{print $1}')
@@ -49,18 +50,34 @@ export escrow_addr=$(echo $result | grep "Resource: " | awk -F "Resource: " '{if
 resim set-default-account $p1 $p1_priv $p1_badge
 export amount=10
 export account=$p1
-export dns_name=dust_lighter_im
+export dns_name=dust@lighter.im
 export xrd="resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3"
 result=$(resim run < ./manifest/replace_holder.sh ./manifest/take_ticket.rtm)
 export p1_ticket=$(echo $result | grep "ResAddr: " | awk -F "ResAddr: " '{if (NR==3) print $2}' | awk -F " " '{print $1}')
-export p1_ticket_id="<${dns_name}>"
+export p1_ticket_id="<dust_lighter_im>"
 
 resim set-default-account $p2 $p2_priv $p2_badge
 export amount=10
 export account=$p2
-export dns_name=dust2_lighter_im
+export dns_name=dust2@lighter.im
 export xrd="resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3"
 result=$(resim run < ./manifest/replace_holder.sh ./manifest/take_ticket.rtm)
 export p2_ticket=$(echo $result | grep "ResAddr: " | awk -F "ResAddr: " '{if (NR==3) print $2}' | awk -F " " '{print $1}')
-export p2_ticket_id="<${dns_name}>"
+export p2_ticket_id="<dust2_lighter_im>"
+
+export seller=$p2
+export seller_id=$p2_ticket_id
+export seller_fee=40
+export buyer=$p1
+export buyer_id=$p1_ticket_id
+export buyer_fee=20
+export volume=1004
+export trade_id=1
+export price=0.03
+export payment_method=alipay
+export res_addr=$xrd
+export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $buyer_fee $seller_fee $payment_method)
+result=$(resim run <./manifest/replace_holder.sh ./manifest/create_escrow.rtm)
+
+
 

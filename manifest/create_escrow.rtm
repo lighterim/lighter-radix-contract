@@ -1,0 +1,46 @@
+CALL_METHOD
+    Address("${seller}")
+    "lock_fee"
+    Decimal("10")
+;
+CALL_METHOD
+  Address("${seller}")
+  "withdraw_non_fungibles"
+  Address("${ticket_addr}")
+  Array<NonFungibleLocalId>(
+      NonFungibleLocalId("${seller_id}")
+  )
+;
+TAKE_ALL_FROM_WORKTOP
+  Address("${ticket_addr}")
+  Bucket("bucket1")
+;
+CALL_METHOD
+  Address("${seller}")
+  "withdraw"
+  Address("${xrd}")
+  Decimal("${volume}")
+;
+TAKE_FROM_WORKTOP
+  Address("${xrd}")
+  Decimal("${volume}")
+  Bucket("bucket2")
+;
+CALL_METHOD
+    Address("${component}")
+    "create_escrow"
+    ${trade_id}u64
+    NonFungibleLocalId("${buyer_id}")
+    Decimal("${buyer_fee}")
+    Decimal("${price}")
+    Decimal("${seller_fee}")
+    "${payment_method}"
+    "${signature}"
+    Bucket("bucket1")
+    Bucket("bucket2")
+;
+CALL_METHOD
+    Address("${seller}")
+    "deposit_batch"
+    Expression("ENTIRE_WORKTOP")
+;

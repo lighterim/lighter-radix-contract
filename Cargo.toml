@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 scrypto = { version = "1.2.0" }
+hex = { version = "0.4.3", default-features = false }
 
 [dev-dependencies]
 scrypto-test = { version = "1.2.0" }

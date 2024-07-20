@@ -5,10 +5,19 @@ export p3=account_tdx_2_129v2sa7652vlmwr5z4fyushc3kpvygzvu6glyvwvvmd349rg9xsz5p
 
 
 
-export package=package_tdx_2_1p5nny29042k7a5nqj6zpatvmh5l5yalxsv9sy2nrlelx6z4z0ccea0
+export pkg=package_tdx_2_1p45dypn22pv0ehxs6vt4q034xsmghvn64smf63epfwdsytlk5e9plm
 export account=$admin_account
 export ticket_price=10
-export dns_name=dust@lighter.im
 export payment_window_epochs=8
+export domain_name="@lighter.im"
+export relay_pub_key="6d187b0f2e66d74410e92e2dc92a5141a55c241646ce87acbcad4ab413170f9b"
 
 ./manifest/replace_holder.sh ./manifest/instantiate.rtm
+
+export dns_name=dust@lighter.im
+export component=component_tdx_2_1czh2f00vr5x9tcywf4chyhhm74munc6s0z84cxe7l2jkt0jfa86mnq
+export amount=10
+export account=$p1
+export dns_name=dust@lighter.im
+export xrd="resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc"
+./manifest/replace_holder.sh ./manifest/take_ticket.rtm

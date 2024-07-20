@@ -9,7 +9,8 @@ CALL_FUNCTION
     "instantiate"
     Decimal("${ticket_price}")
     ${payment_window_epochs}u16
-    "${pub_key}"
+    "${relay_pub_key}"
+    "${domain_name}"
 ;
 CALL_METHOD
     Address("${admin_account}")
