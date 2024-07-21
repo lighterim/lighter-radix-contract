@@ -21,7 +21,10 @@ pub struct EscrowData {
     // pub volume: Decimal, // as seller. trade.volume = amount * (1-sell fee rate)
     // pub buyer_fee_rate: Decimal,
     // pub seller_fee_rate: Decimal,
+    #[mutable]
     pub instruction: Instruction,
+    #[mutable]
     pub cancel_after_epoch_by_seller: u64,
+    #[mutable]
     pub gas_spent_by_relayer: Decimal
 }

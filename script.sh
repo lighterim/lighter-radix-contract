@@ -38,7 +38,7 @@ export pkg=$(echo $result | awk -F ": " '{print $2}')
 
 export ticket_price=10
 export payment_window_epochs=8
-export relay_pub_key="6d187b0f2e66d74410e92e2dc92a5141a55c241646ce87acbcad4ab413170f9b"
+export relay_pub_key="a5bc3d9296bda1e52f96bf0a65238998877dbddb0703bd37ef1f18a6ffce458a"
 export domain_name="@lighter.im"
 result=$(resim run < ./manifest/replace_holder.sh ./manifest/instantiate.rtm)
 export component=$(echo $result | grep "Component: "| awk -F "Component: " '{print $2}' | awk -F " " '{print $1}')
@@ -77,7 +77,11 @@ export price=0.03
 export payment_method=alipay
 export res_addr=$xrd
 export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $buyer_fee $seller_fee $payment_method)
+echo "$trade_id,$buyer_id,$seller_id,$res_addr,$volume,$price,$buyer_fee,$seller_fee,$payment_method"
 result=$(resim run <./manifest/replace_holder.sh ./manifest/create_escrow.rtm)
+
+resim set-default-account $p1 $p1_priv $p1_badge
+result=$(resim run <./manifest/replace_holder.sh ./manifest/buyer_paid.rtm)
 
 
 

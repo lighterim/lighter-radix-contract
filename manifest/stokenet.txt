@@ -41,3 +41,7 @@ export payment_method=alipay
 export res_addr=$xrd
 export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $buyer_fee $seller_fee $payment_method)
 ./manifest/replace_holder.sh ./manifest/create_escrow.rtm
+
+
+
+./manifest/replace_holder.sh ./manifest/buyer_paid.rtm

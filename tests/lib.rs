@@ -71,9 +71,9 @@ fn sign_and_verify() {
     // let test_signature="a7241553838fdf6fa07045b5473f6b7b637dc56b7ef68628976c058ae0db10a231f5aea28634adf9c8f89cf78c6f57e0580d3cd7a4d3659eb59cbf515946d609";
     // let msg = "Test";
     let msg = "1,<dust_lighter_im>,<dust2_lighter_im>,resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3,1004,0.03,20,40,alipay";
-    let test_sk = "d7feb0f5c5c1f587be6b651e3244da1b053e1aa3147c3219aa1aa1f6265e57a0";                                                                      
-    let test_pk = "6d187b0f2e66d74410e92e2dc92a5141a55c241646ce87acbcad4ab413170f9b";
-    let test_signature = "f8cec887887c63f7d00d95de357902ce044af5ea912f726da53de52093cb65c2a34c1211a725fcc15079332d8b97f955ea7bb025eb75772cc941b5e90d306e04";
+    let test_sk = "$$$$$";                                                                      
+    let test_pk = "a5bc3d9296bda1e52f96bf0a65238998877dbddb0703bd37ef1f18a6ffce458a";
+    let test_signature = "9067f6160bcde97ccc697e53e093a0c8fc8ae6743bbd80cc432ea172aad2c01e07cf7222c0c29e4ba7f8c99c3d20b5febd40b424c5b7e47255f11f713ad4730b";
 
     let test_message_hash = keccak256_hash(msg);  //hash(msg);
     
@@ -84,6 +84,6 @@ fn sign_and_verify() {
     
     // error!("sk:{}", sk.)
     assert_eq!(sk.public_key(), pk);
-    // assert_eq!(sk.sign(&test_message_hash), sig);
+    assert_eq!(sk.sign(&test_message_hash), sig);
     assert!(verify_ed25519(&test_message_hash, &pk, &sig));
 }

@@ -2,12 +2,14 @@ import sys
 import os
 from eth_hash.auto import keccak
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives import serialization 
 
 
 def sign_message(msg: str, priv_hex: str):
     priv_key = ed25519.Ed25519PrivateKey.from_private_bytes(bytes.fromhex(priv_hex))
-    #print(msg)
+    #print(priv_key.public_key().public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw).hex())
     data = keccak(msg.encode())
+    #print("msg.hash", data.hex());
     signature = priv_key.sign(data).hex()
     # print("{} = {}, {}".format(msg, signature, priv_key.public_key().verify(bytes.fromhex(signature), data)))
     return signature
