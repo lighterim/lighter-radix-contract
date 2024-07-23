@@ -45,3 +45,6 @@ export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr 
 
 
 ./manifest/replace_holder.sh ./manifest/buyer_paid.rtm
+
+
+./manifest/replace_holder.sh ./manifest/seller_release.rtm
