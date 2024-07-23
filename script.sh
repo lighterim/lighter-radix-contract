@@ -83,5 +83,7 @@ result=$(resim run <./manifest/replace_holder.sh ./manifest/create_escrow.rtm)
 resim set-default-account $p1 $p1_priv $p1_badge
 result=$(resim run <./manifest/replace_holder.sh ./manifest/buyer_paid.rtm)
 
+resim set-default-account $p2 $p2_priv $p2_badge
+result=$(resim run <./manifest/replace_holder.sh ./manifest/seller_release.rtm)
 
 

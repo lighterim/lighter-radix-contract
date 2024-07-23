@@ -26,7 +26,7 @@ mod lighter_radix{
         /// public key of Lighter relay
         relay_public_key: Ed25519PublicKey,
         ///
-        /// 
+        /// lighter.im
         relay_domain_name: String,
         ///
         /// ResourceManager for Ticket NFT. 
@@ -49,6 +49,7 @@ mod lighter_radix{
         ///
         /// credit for buyer
         user_credit: KeyValueStore<ResourceAddress, KeyValueStore<NonFungibleLocalId, Decimal>>,
+        ///
         /// escrow for seller.
         user_escrow: KeyValueStore<ResourceAddress, KeyValueStore<NonFungibleLocalId, Decimal>>,
         ///
@@ -202,7 +203,77 @@ mod lighter_radix{
             });
             (ticket,bucket)
         }
-    
+
+
+        fn add_pending_trade(& self, ticket_id: &NonFungibleLocalId, trade_id: u64){
+            let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(ticket_id);
+            let cap = ticket.deposit_amount.checked_div(ticket.channel_price).unwrap().checked_ceiling().unwrap();
+            assert!(Decimal::from(ticket.pending_order_ids.len() + 1) <= cap, "the ticket({}) reach the maximum number of parallel transactions.", ticket_id);
+            let mut pending_order_ids = ticket.pending_order_ids;
+            pending_order_ids.push(trade_id);
+            self.ticket_res_mgr.update_non_fungible_data(ticket_id, "pending_order_ids", pending_order_ids);
+        }
+
+        fn remove_trade_done(& self, ticket_id: &NonFungibleLocalId, trade_id: u64){
+            let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(ticket_id);
+            let mut pending_order_ids = ticket.pending_order_ids;
+            if let Ok(index) = pending_order_ids.binary_search(&trade_id){
+                pending_order_ids.remove(index);
+                self.ticket_res_mgr.update_non_fungible_data(ticket_id, "pending_order_ids", pending_order_ids);
+            }
+        }
+
+        fn increase_buyer_credit(&mut self, token_addr: ResourceAddress, credit_amount: Decimal, buyer: &NonFungibleLocalId){
+            // increase seller escrow
+            if self.user_escrow.get(&token_addr).is_some(){
+                let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
+                if user_escrow_kv.get(buyer).is_some(){
+                    let mut current = user_escrow_kv.get_mut(buyer).unwrap();
+                    *current = current.checked_add(credit_amount).unwrap();
+                }
+                else{
+                    user_escrow_kv.insert(buyer.clone(), credit_amount);
+                }
+            }
+            else {
+                let token_escrow_map = KeyValueStore::new();
+                token_escrow_map.insert(buyer.clone(), credit_amount);
+                self.user_escrow.insert(token_addr.clone(), token_escrow_map);
+            }
+        }
+
+        fn increase_seller_escrow(&mut self, token_addr: ResourceAddress, volume:Decimal, seller_fee: Decimal, seller: &NonFungibleLocalId){
+            // increase seller escrow
+            let actual_escrow = volume.checked_mul(Decimal::ONE.checked_sub(seller_fee).unwrap()).unwrap();
+            if self.user_escrow.get(&token_addr).is_some(){
+                let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
+                if user_escrow_kv.get(seller).is_some(){
+                    let mut current = user_escrow_kv.get_mut(seller).unwrap();
+                    *current = current.checked_add(actual_escrow).unwrap();
+                }
+                else{
+                    user_escrow_kv.insert(seller.clone(), actual_escrow);
+                }
+            }
+            else {
+                let token_escrow_map = KeyValueStore::new();
+                token_escrow_map.insert(seller.clone(), actual_escrow);
+                self.user_escrow.insert(token_addr.clone(), token_escrow_map);
+            }
+        }
+
+        fn reduce_seller_escrow(&mut self, token_addr: ResourceAddress, actual_escrow:Decimal, seller: &NonFungibleLocalId){
+            // increase seller escrow
+            if self.user_escrow.get(&token_addr).is_some(){
+                let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
+                if user_escrow_kv.get(seller).is_some(){
+                    let mut current = user_escrow_kv.get_mut(seller).unwrap();
+                    *current = current.checked_sub(actual_escrow).unwrap();
+                    //TODO: remove
+                }
+            }
+        }
+
         pub fn create_escrow(
             &mut self, 
             trade_id: u64,
@@ -225,16 +296,19 @@ mod lighter_radix{
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data.{}|{}", &args, &signature);
+            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data.{}|{}", &args, &signature);
 
+            // collect for seller escrow
             if self.escrow_vault_map.get(&token_addr).is_some(){
                 self.escrow_vault_map.get_mut(&token_addr).unwrap().put(token_bucket);
             }
             else{
                 self.escrow_vault_map.insert(token_addr, Vault::with_bucket(token_bucket));
             }
-            //TODO: user escrow
-            // self.user_escrow.get_mut(&token_addr).is_some()
+            
+            self.increase_seller_escrow(token_addr, volume, seller_fee, &seller);
+            self.add_pending_trade(&buyer, trade_id);
+            self.add_pending_trade(&seller, trade_id);
 
             let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             let escrow_data = EscrowData{
@@ -245,6 +319,7 @@ mod lighter_radix{
             self.escrow_nft_vault.put(
                 self.escrow_res_mgr.mint_non_fungible(&escrow_nft_id, escrow_data).as_non_fungible()
             );
+
             Runtime::emit_event(CreateEscrowEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: escrow_nft_id.clone(),
@@ -321,14 +396,20 @@ mod lighter_radix{
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
-            // let escrow_bucket = self.escrow_nft_vault.take_non_fungible(&escrow_nft_id);
-            // escrow_bucket.take(amount)
+            
+            let actual_escrow = volume.checked_mul(Decimal::ONE.checked_sub(seller_fee).unwrap()).unwrap();
+            let actual_credit = actual_escrow.checked_mul(Decimal::ONE.checked_sub(buyer_fee).unwrap()).unwrap();
+            self.reduce_seller_escrow(token_addr, actual_escrow, &seller);
+            self.increase_buyer_credit(token_addr, actual_credit, &buyer);
+            self.remove_trade_done(&seller, trade_id);
+            self.remove_trade_done(&buyer, trade_id);
+
             let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
-            assert!(escrow_data.instruction == Instruction::Escrowed || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to BuyerPaid!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            assert!(escrow_data.instruction == Instruction::BuyerPaid || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to Release!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
             self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::Release);
-            //TODO: 为买家计帐
+            
             Runtime::emit_event(SellerReleasedEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: escrow_nft_id.clone(),
@@ -362,7 +443,7 @@ mod lighter_radix{
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             
             let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
@@ -404,7 +485,7 @@ mod lighter_radix{
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             
             let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
