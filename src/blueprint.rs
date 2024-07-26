@@ -1,6 +1,7 @@
 use scrypto::prelude::*;
 use crate::ticket::TicketData;
 use crate::escrow::*;
+use crate::utils::*;
 
 #[blueprint]
 #[events(TakeTicketEvent, CreateEscrowEvent, BuyerPaidEvent, SellerReleasedEvent, SellerRequestCancelEvent)]
@@ -244,7 +245,7 @@ mod lighter_radix{
 
         fn increase_seller_escrow(&mut self, token_addr: ResourceAddress, volume:Decimal, seller_fee: Decimal, seller: &NonFungibleLocalId){
             // increase seller escrow
-            let actual_escrow = volume.checked_mul(Decimal::ONE.checked_sub(seller_fee).unwrap()).unwrap();
+            let actual_escrow = volume.checked_mul(Decimal::ONE.checked_sub(get_bp_fee(seller_fee)).unwrap()).unwrap();
             if self.user_escrow.get(&token_addr).is_some(){
                 let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
                 if user_escrow_kv.get(seller).is_some(){
@@ -399,8 +400,8 @@ mod lighter_radix{
             assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             
-            let actual_escrow = volume.checked_mul(Decimal::ONE.checked_sub(seller_fee).unwrap()).unwrap();
-            let actual_credit = actual_escrow.checked_mul(Decimal::ONE.checked_sub(buyer_fee).unwrap()).unwrap();
+            let actual_escrow = volume.checked_mul(Decimal::ONE.checked_sub(get_bp_fee(seller_fee)).unwrap()).unwrap();
+            let actual_credit = actual_escrow.checked_mul(Decimal::ONE.checked_sub(get_bp_fee(buyer_fee)).unwrap()).unwrap();
             self.reduce_seller_escrow(token_addr, actual_escrow, &seller);
             self.increase_buyer_credit(token_addr, actual_credit, &buyer);
             self.remove_trade_done(&seller, trade_id);
