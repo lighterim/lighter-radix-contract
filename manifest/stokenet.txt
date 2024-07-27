@@ -5,7 +5,7 @@ export p3=account_tdx_2_129v2sa7652vlmwr5z4fyushc3kpvygzvu6glyvwvvmd349rg9xsz5p
 
 
 
-export pkg=package_tdx_2_1p5r6w9v270kd5y6742gck72e26m5tvewfh4eut4kwu7w0yat3rq5kr
+export pkg=package_tdx_2_1p50aeqyyl3htj9csx7y8lw8cq345r0kj3sxehgkj3u3ws7w6q29g2c
 export account=$admin_account
 export ticket_price=10
 export payment_window_epochs=8
@@ -13,7 +13,7 @@ export domain_name="@lighter.im"
 export relay_pub_key="a5bc3d9296bda1e52f96bf0a65238998877dbddb0703bd37ef1f18a6ffce458a"
 
 ./manifest/replace_holder.sh ./manifest/instantiate.rtm
-export component=component_tdx_2_1czwxqp7ktgeym5usnyt5y08ps2grl92hsnlnmeta2akzut3vnsplk8
+export component=component_tdx_2_1cqtx2lvk9saaxcah8qzazp4gl43mlte8fjgn7n0g97fjtgnlqve59w
 export xrd="resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc"
 
 export amount=10
@@ -27,7 +27,7 @@ export account=$p2
 export dns_name=dust2@lighter.im
 ./manifest/replace_holder.sh ./manifest/take_ticket.rtm
 
-export ticket_addr=resource_tdx_2_1nt5g3lwzusfjj6lzkzpyu2u06dt6m8td7uat08qw0xnrv5ttx2v552
+export ticket_addr=resource_tdx_2_1n2wuej8rtw6s66f7pl0fx048ak8elugp2tqv7ljyyt5alht9e5xu88
 export seller=$p2
 export seller_id="<dust2_lighter_im>"
 export seller_fee=40
