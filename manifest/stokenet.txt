@@ -5,7 +5,7 @@ export p3=account_tdx_2_129v2sa7652vlmwr5z4fyushc3kpvygzvu6glyvwvvmd349rg9xsz5p
 
 
 
-export pkg=package_tdx_2_1ph34rv8qd3vxjptrvm0dpr3xw3mzwwvzx024gmahe5xm5ejpqq7dtl
+export pkg=package_tdx_2_1pkmej9vvgnnwlvfvj4097c7575kykcy034czr2twm6uj6avmqq98z8
 export account=$admin_account
 export ticket_price=10
 export payment_window_epochs=8
@@ -13,7 +13,7 @@ export domain_name="@lighter.im"
 export relay_pub_key="a5bc3d9296bda1e52f96bf0a65238998877dbddb0703bd37ef1f18a6ffce458a"
 
 ./manifest/replace_holder.sh ./manifest/instantiate.rtm
-export component=component_tdx_2_1czcutq7stcpqzr5px2fyrzusq29vn32t0psss2mputv5guvjxf24ku
+export component=component_tdx_2_1craylg4f5vtu7v2yltjzvddmeeqmrqu6ef3myugj7dh9cne0s33uk6
 export xrd="resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc"
 
 export amount=10
@@ -27,21 +27,16 @@ export account=$p2
 export dns_name=dust2@lighter.im
 ./manifest/replace_holder.sh ./manifest/take_ticket.rtm
 
-{"xrd":{"dust": 1000}}
 
-xrd --> kv_$addr {nft_id: dddd}
-{"dust", "dust2"....}
-
-data: $kv_addr, $seller("dust2") --->
-
-export ticket_addr=resource_tdx_2_1nfeaqyegaccusue7fn5xs3suh8pwevs79evjhlmns2phvh7gtd7gk0
+export ticket_addr=resource_tdx_2_1n2rna0n9qgtnvnfgvjye2793emv0eqnrs6kjjl8akthgmlhkhnvhc8
 export seller=$p2
 export seller_id="<dust2_lighter_im>"
 export seller_fee=40
 export buyer=$p1
 export buyer_id="<dust_lighter_im>"
 export buyer_fee=20
-export volume=1004
+export volume=1000
+export amount=1004
 export trade_id=1
 export price=0.03
 export payment_method=alipay
@@ -54,4 +49,7 @@ export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr 
 
 
 ./manifest/replace_holder.sh ./manifest/seller_release.rtm
+
+export amount=998
+./manifest/replace_holder.sh ./manifest/buyer_withdraw.rtm
 

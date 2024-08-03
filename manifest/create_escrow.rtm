@@ -19,11 +19,11 @@ CALL_METHOD
   Address("${seller}")
   "withdraw"
   Address("${xrd}")
-  Decimal("${volume}")
+  Decimal("${amount}")
 ;
 TAKE_FROM_WORKTOP
   Address("${xrd}")
-  Decimal("${volume}")
+  Decimal("${amount}")
   Bucket("bucket2")
 ;
 CALL_METHOD
@@ -33,6 +33,7 @@ CALL_METHOD
     NonFungibleLocalId("${buyer_id}")
     Decimal("${buyer_fee}")
     Decimal("${price}")
+    Decimal("${volume}")
     Decimal("${seller_fee}")
     "${payment_method}"
     "${signature}"

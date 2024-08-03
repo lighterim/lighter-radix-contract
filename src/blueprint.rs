@@ -253,34 +253,32 @@ mod lighter_radix{
             }
         }
 
-        fn increase_seller_escrow(&mut self, token_addr: ResourceAddress, volume:Decimal, seller_fee: Decimal, seller: &NonFungibleLocalId){
+        fn increase_seller_escrow(&mut self, token_addr: ResourceAddress, volume:Decimal, seller: &NonFungibleLocalId){
             // increase seller escrow
-            let actual_escrow = get_net_by_bp(volume, seller_fee);
             if self.user_escrow.get(&token_addr).is_some(){
                 let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
                 if user_escrow_kv.get(seller).is_some(){
                     let mut current = user_escrow_kv.get_mut(seller).unwrap();
-                    *current = current.checked_add(actual_escrow).unwrap();
+                    *current = current.checked_add(volume).unwrap();
                 }
                 else{
-                    user_escrow_kv.insert(seller.clone(), actual_escrow);
+                    user_escrow_kv.insert(seller.clone(), volume);
                 }
             }
             else {
                 let token_escrow_map = KeyValueStore::new();
-                token_escrow_map.insert(seller.clone(), actual_escrow);
+                token_escrow_map.insert(seller.clone(), volume);
                 self.user_escrow.insert(token_addr.clone(), token_escrow_map);
             }
         }
 
-        fn reduce_seller_escrow(&mut self, token_addr: &ResourceAddress, volume:Decimal, seller: &NonFungibleLocalId, seller_fee: Decimal){
-            let actual_escrow = get_net_by_bp(volume, seller_fee);
+        fn reduce_seller_escrow(&mut self, token_addr: &ResourceAddress, volume:Decimal, seller: &NonFungibleLocalId){
             // increase seller escrow
             if self.user_escrow.get(&token_addr).is_some(){
                 let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
                 if user_escrow_kv.get(seller).is_some(){
                     let mut current = user_escrow_kv.get_mut(seller).unwrap();
-                    *current = current.checked_sub(actual_escrow).unwrap();
+                    *current = current.checked_sub(volume).unwrap();
                     //TODO: remove
                 }
             }
@@ -292,15 +290,16 @@ mod lighter_radix{
             buyer: NonFungibleLocalId,
             buyer_fee: Decimal,
             price: Decimal, 
+            volume: Decimal,
             seller_fee: Decimal,
             payment_method: String,
             signature: String,
             seller_ticket: NonFungibleBucket,
-            token_bucket: Bucket
-        ) -> (NonFungibleBucket, String){
+            mut token_bucket: Bucket
+        ) -> (NonFungibleBucket, Bucket){
             assert!(seller_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
             
-            let volume = token_bucket.amount();
+            let amount = token_bucket.amount();
             let token_addr = token_bucket.resource_address();
             let seller = seller_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
@@ -309,16 +308,19 @@ mod lighter_radix{
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
             assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data.{}|{}", &args, &signature);
-
+            
+            let total = get_total_by_bp(volume, seller_fee);
+            assert!(amount >= total, "escrow amount less than required.{}", total);
+            let escrow_bucket = token_bucket.take_advanced(total, WithdrawStrategy::Rounded(RoundingMode::ToPositiveInfinity));
             // collect for seller escrow
             if self.escrow_vault_map.get(&token_addr).is_some(){
-                self.escrow_vault_map.get_mut(&token_addr).unwrap().put(token_bucket);
+                self.escrow_vault_map.get_mut(&token_addr).unwrap().put(escrow_bucket);
             }
             else{
-                self.escrow_vault_map.insert(token_addr, Vault::with_bucket(token_bucket));
+                self.escrow_vault_map.insert(token_addr, Vault::with_bucket(escrow_bucket));
             }
             
-            self.increase_seller_escrow(token_addr, volume, seller_fee, &seller);
+            self.increase_seller_escrow(token_addr, volume, &seller);
             self.add_pending_trade(&buyer, trade_id);
             self.add_pending_trade(&seller, trade_id);
 
@@ -346,7 +348,7 @@ mod lighter_radix{
                 buyer_fee,
                 seller_fee
             });
-            (seller_ticket, h.to_string())
+            (seller_ticket, token_bucket)
         }
 
         pub fn buyer_paid(&mut self, 
@@ -389,7 +391,7 @@ mod lighter_radix{
                 buyer_fee,
                 seller_fee
             });
-            //TODO: 更新付款时间. 
+            //TODO: 更新付款时间 nft
             buyer_ticket
         }
 
@@ -462,9 +464,8 @@ mod lighter_radix{
             assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             
-            let actual_escrow = get_net_by_bp(volume, seller_fee);
-            let actual_credit = get_net_by_bp(actual_escrow,buyer_fee);
-            self.reduce_seller_escrow(&token_addr, volume, &seller, seller_fee);
+            let actual_credit = get_net_by_bp(volume, buyer_fee);
+            self.reduce_seller_escrow(&token_addr, volume, &seller);
             self.increase_buyer_credit(token_addr, actual_credit, &buyer);
             self.remove_trade_done(&seller, trade_id);
             self.remove_trade_done(&buyer, trade_id);
@@ -516,7 +517,7 @@ mod lighter_radix{
 
             let mut kv = self.user_credit.get_mut(&token_addr).unwrap();
             let mut credit = kv.get_mut(&user_id).unwrap();
-            assert!(*credit > amount, "credit insuffice");
+            assert!(*credit >= amount, "credit insuffice");
             *credit = *credit - amount;
             let bucket = self.escrow_vault_map.get_mut(&token_addr).unwrap().take_advanced(amount, WithdrawStrategy::Rounded(RoundingMode::ToNegativeInfinity));
             Runtime::emit_event(WithdrawByCreditEvent{
@@ -586,6 +587,7 @@ mod lighter_radix{
             signature: String,
             seller_ticket: NonFungibleBucket
         ) -> (NonFungibleBucket, Bucket){
+            assert!(seller_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
             let seller = seller_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
             let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
@@ -603,16 +605,17 @@ mod lighter_radix{
                  "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
             escrow_data.instruction = Instruction::SellerCancelled;
             // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::SellerCancel);
+            let total = get_total_by_bp(volume, seller_fee);
             let mut vault = self.escrow_vault_map.get_mut(&token_addr).unwrap();
-            let escrow_bucket = vault.take_advanced(volume, WithdrawStrategy::Rounded(RoundingMode::ToNegativeInfinity));
+            let escrow_bucket = vault.take_advanced(total, WithdrawStrategy::Rounded(RoundingMode::ToNegativeInfinity));
             // self.reduce_seller_escrow(&token_addr, volume, &seller, seller_fee);
-            let actual_escrow = get_net_by_bp(volume, seller_fee);
+
             // increase seller escrow
             if self.user_escrow.get(&token_addr).is_some(){
                 let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
                 if user_escrow_kv.get(&seller).is_some(){
                     let mut current = user_escrow_kv.get_mut(&seller).unwrap();
-                    *current = current.checked_sub(actual_escrow).unwrap();
+                    *current = current.checked_sub(volume).unwrap();
                     //TODO: remove
                 }
             }

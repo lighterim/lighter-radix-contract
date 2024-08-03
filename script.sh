@@ -71,7 +71,8 @@ export seller_fee=40
 export buyer=$p1
 export buyer_id=$p1_ticket_id
 export buyer_fee=20
-export volume=1004
+export amount=1004
+export volume=1000
 export trade_id=1
 export price=0.03
 export payment_method=alipay
@@ -87,6 +88,6 @@ resim set-default-account $p2 $p2_priv $p2_badge
 result=$(resim run <./manifest/replace_holder.sh ./manifest/seller_release.rtm)
 
 resim set-default-account $p1 $p1_priv $p1_badge
-export amount=10
+export amount=998
 result=$(resim run <./manifest/replace_holder.sh ./manifest/buyer_withdraw.rtm)
 
