@@ -4,7 +4,7 @@ use crate::escrow::*;
 use crate::utils::*;
 
 #[blueprint]
-#[events(TakeTicketEvent, CreateEscrowEvent, BuyerPaidEvent, SellerReleasedEvent, SellerRequestCancelEvent)]
+#[events(TakeTicketEvent, CreateEscrowEvent, BuyerPaidEvent, SellerReleasedEvent, SellerRequestCancelEvent,WithdrawByCreditEvent)]
 mod lighter_radix{
 
     enable_method_auth! {
@@ -16,10 +16,15 @@ mod lighter_radix{
             // new_pool => restrict_to: [admin, OWNER];
             take_ticket => PUBLIC;
             create_escrow => PUBLIC;
+            buyer_cancel => PUBLIC;
             buyer_paid => PUBLIC;
+            withdraw => PUBLIC;
             seller_release => PUBLIC;
             seller_request_cancel => PUBLIC;
             seller_cancel => PUBLIC;
+            //Temp
+            get_credit => PUBLIC;
+            get_escrow => PUBLIC;
         }
     }
 
@@ -203,8 +208,8 @@ mod lighter_radix{
             error!("nostr_nip_05:{}, processed_order_cnt:{}, nft_id:{}", nostr_nip_05.clone(), processed_order_cnt, &nft_id);
             Runtime::emit_event(TakeTicketEvent{
                 channel_count: processed_order_cnt,
-                nft_id: nft_id,
-                nostr_nip_05: nostr_nip_05.clone()
+                nostr_nip_05: nostr_nip_05.clone(),
+                nft_id
             });
             (ticket,bucket)
         }
@@ -230,20 +235,21 @@ mod lighter_radix{
 
         fn increase_buyer_credit(&mut self, token_addr: ResourceAddress, credit_amount: Decimal, buyer: &NonFungibleLocalId){
             // increase seller escrow
-            if self.user_escrow.get(&token_addr).is_some(){
-                let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
-                if user_escrow_kv.get(buyer).is_some(){
-                    let mut current = user_escrow_kv.get_mut(buyer).unwrap();
+            if self.user_credit.get(&token_addr).is_some(){
+                let mut user_credit_kv = self.user_credit.get_mut(&token_addr).unwrap();
+                if user_credit_kv.get(buyer).is_some(){
+                    let mut current = user_credit_kv.get_mut(buyer).unwrap();
                     *current = current.checked_add(credit_amount).unwrap();
                 }
                 else{
-                    user_escrow_kv.insert(buyer.clone(), credit_amount);
+                    user_credit_kv.insert(buyer.clone(), credit_amount);
+                    info!("{} credit: {}", buyer.clone(), credit_amount)
                 }
             }
             else {
-                let token_escrow_map = KeyValueStore::new();
-                token_escrow_map.insert(buyer.clone(), credit_amount);
-                self.user_escrow.insert(token_addr.clone(), token_escrow_map);
+                let user_credit_kv = KeyValueStore::new();
+                user_credit_kv.insert(buyer.clone(), credit_amount);
+                self.user_credit.insert(token_addr.clone(), user_credit_kv);
             }
         }
 
@@ -267,7 +273,8 @@ mod lighter_radix{
             }
         }
 
-        fn reduce_seller_escrow(&mut self, token_addr: ResourceAddress, actual_escrow:Decimal, seller: &NonFungibleLocalId){
+        fn reduce_seller_escrow(&mut self, token_addr: &ResourceAddress, volume:Decimal, seller: &NonFungibleLocalId, seller_fee: Decimal){
+            let actual_escrow = get_net_by_bp(volume, seller_fee);
             // increase seller escrow
             if self.user_escrow.get(&token_addr).is_some(){
                 let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
@@ -386,6 +393,52 @@ mod lighter_radix{
             buyer_ticket
         }
 
+        pub fn buyer_cancel(&mut self,
+            trade_id: u64,
+            seller: NonFungibleLocalId,
+            token_addr: ResourceAddress,
+            volume: Decimal,
+            price: Decimal, 
+            seller_fee: Decimal,
+            buyer_fee: Decimal,
+            payment_method: String,
+            signature: String,
+            buyer_ticket: NonFungibleBucket
+        ) -> NonFungibleBucket{
+            assert!(buyer_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
+            let buyer = buyer_ticket.non_fungible_local_id();
+            let str_res_addr = Runtime::bech32_encode_address(token_addr);
+            let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
+            info!("args:{}", &args);
+            let h =  keccak256_hash(args.clone());
+            let sig = Ed25519Signature::from_str(&signature).unwrap();
+            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data:{} | {}", &args, &signature);
+            
+            // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
+            // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
+            let mut escrow_data = self.escrow_map.get_mut(&h).unwrap();
+            assert!(escrow_data.instruction == Instruction::Escrowed 
+                || escrow_data.instruction == Instruction::SellerRequestCancel 
+                || escrow_data.instruction == Instruction::BuyerPaid, "current status not support turn to BuyerCancelled!");
+            // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::BuyerPaid);
+            escrow_data.instruction = Instruction::BuyerCancelled;
+            escrow_data.next_act_epoch = Runtime::current_epoch().number() + (self.payment_window_epochs as u64);
+            Runtime::emit_event(BuyerPaidEvent{
+                payment_method:payment_method.clone(),
+                escrow_id: h.to_string(),
+                token_addr,
+                trade_id,
+                buyer,
+                seller,
+                price,
+                volume,
+                buyer_fee,
+                seller_fee
+            });
+            //TODO: update the buyer cancel.
+            buyer_ticket
+        }
+
         pub fn seller_release(&mut self, 
             trade_id: u64,
             buyer: NonFungibleLocalId,
@@ -411,7 +464,7 @@ mod lighter_radix{
             
             let actual_escrow = get_net_by_bp(volume, seller_fee);
             let actual_credit = get_net_by_bp(actual_escrow,buyer_fee);
-            self.reduce_seller_escrow(token_addr, actual_escrow, &seller);
+            self.reduce_seller_escrow(&token_addr, volume, &seller, seller_fee);
             self.increase_buyer_credit(token_addr, actual_credit, &buyer);
             self.remove_trade_done(&seller, trade_id);
             self.remove_trade_done(&buyer, trade_id);
@@ -420,12 +473,14 @@ mod lighter_radix{
             let mut escrow_data = self.escrow_map.get_mut(&h).unwrap();
             assert!(escrow_data.instruction == Instruction::BuyerPaid || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to Release!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
             // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::Release);
-            escrow_data.instruction = Instruction::Release;
+            escrow_data.instruction = Instruction::Released;
+            escrow_data.next_act_epoch = 0u64;
             
             
             Runtime::emit_event(SellerReleasedEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: h.to_string(),
+                buyer_credit: actual_credit,
                 token_addr,
                 trade_id,
                 buyer,
@@ -436,6 +491,40 @@ mod lighter_radix{
                 seller_fee
             });
             seller_ticket
+        }
+
+        //TEMP
+        pub fn get_credit(&self, token_addr: ResourceAddress, user_id: NonFungibleLocalId) -> Decimal{
+            if self.user_credit.get(&token_addr).is_some_and(|kv| kv.get(&user_id).is_some()){
+                return *self.user_credit.get(&token_addr).unwrap().get(&user_id).unwrap();
+            }
+            Decimal::zero()
+        }
+
+        //TEMP
+        pub fn get_escrow(&self, token_addr: ResourceAddress, user_id: NonFungibleLocalId) -> Decimal{
+            if self.user_escrow.get(&token_addr).is_some_and(|kv| kv.get(&user_id).is_some()){
+                return *self.user_escrow.get(&token_addr).unwrap().get(&user_id).unwrap();
+            }
+            Decimal::zero()
+        }
+
+        pub fn withdraw(&mut self, token_addr: ResourceAddress, amount: Decimal, ticket: NonFungibleBucket) ->(NonFungibleBucket, Bucket){
+            assert!(ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
+            let user_id = ticket.non_fungible_local_id();
+            assert!(self.user_credit.get(&token_addr).is_some_and(|kv| kv.get(&user_id).is_some()), "the user:{} has not exist credit!", &user_id);
+
+            let mut kv = self.user_credit.get_mut(&token_addr).unwrap();
+            let mut credit = kv.get_mut(&user_id).unwrap();
+            assert!(*credit > amount, "credit insuffice");
+            *credit = *credit - amount;
+            let bucket = self.escrow_vault_map.get_mut(&token_addr).unwrap().take_advanced(amount, WithdrawStrategy::Rounded(RoundingMode::ToNegativeInfinity));
+            Runtime::emit_event(WithdrawByCreditEvent{
+                ticket_id: user_id,
+                token_addr,
+                amount
+            });
+            (ticket, bucket)
         }
 
         pub fn seller_request_cancel(&mut self, 
@@ -450,6 +539,7 @@ mod lighter_radix{
             signature: String,
             seller_ticket: NonFungibleBucket
         ) -> NonFungibleBucket{
+            assert!(seller_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
             let seller = seller_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
             let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
@@ -508,11 +598,24 @@ mod lighter_radix{
             // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
             let mut escrow_data = self.escrow_map.get_mut(&h).unwrap();
             let current_epoch = Runtime::current_epoch().number();
-            assert!(escrow_data.instruction == Instruction::SellerRequestCancel && escrow_data.next_act_epoch <= current_epoch , "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
-            escrow_data.instruction = Instruction::SellerCancel;
+            assert!(escrow_data.instruction == Instruction::SellerRequestCancel &&
+                escrow_data.request_cancel_epoch + (self.payment_window_epochs as u64) <= current_epoch,
+                 "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            escrow_data.instruction = Instruction::SellerCancelled;
             // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::SellerCancel);
             let mut vault = self.escrow_vault_map.get_mut(&token_addr).unwrap();
             let escrow_bucket = vault.take_advanced(volume, WithdrawStrategy::Rounded(RoundingMode::ToNegativeInfinity));
+            // self.reduce_seller_escrow(&token_addr, volume, &seller, seller_fee);
+            let actual_escrow = get_net_by_bp(volume, seller_fee);
+            // increase seller escrow
+            if self.user_escrow.get(&token_addr).is_some(){
+                let mut user_escrow_kv = self.user_escrow.get_mut(&token_addr).unwrap();
+                if user_escrow_kv.get(&seller).is_some(){
+                    let mut current = user_escrow_kv.get_mut(&seller).unwrap();
+                    *current = current.checked_sub(actual_escrow).unwrap();
+                    //TODO: remove
+                }
+            }
 
             Runtime::emit_event(SellerCancelEvent{
                 payment_method:payment_method.clone(),
@@ -574,6 +677,7 @@ struct SellerReleasedEvent{
     token_addr: ResourceAddress,
     price: Decimal,
     volume: Decimal,
+    buyer_credit: Decimal,
     buyer_fee: Decimal,
     seller_fee: Decimal,
     payment_method: String,
@@ -605,4 +709,11 @@ struct SellerCancelEvent{
     seller_fee: Decimal,
     payment_method: String,
     escrow_id: String
+}
+
+#[derive(ScryptoSbor, ScryptoEvent)]
+struct WithdrawByCreditEvent{
+    ticket_id: NonFungibleLocalId,
+    token_addr: ResourceAddress,
+    amount: Decimal
 }

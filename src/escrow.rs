@@ -4,10 +4,11 @@ use scrypto::prelude::*;
 pub enum Instruction {
     Escrowed,
     BuyerPaid,
-    Release,
+    Released,
     SellerRequestCancel,
-    SellerCancel,
-    Resolve
+    SellerCancelled,
+    BuyerCancelled,
+    Resolved
 }
 
 

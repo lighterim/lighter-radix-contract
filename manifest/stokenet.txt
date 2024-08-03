@@ -5,7 +5,7 @@ export p3=account_tdx_2_129v2sa7652vlmwr5z4fyushc3kpvygzvu6glyvwvvmd349rg9xsz5p
 
 
 
-export pkg=package_tdx_2_1p50aeqyyl3htj9csx7y8lw8cq345r0kj3sxehgkj3u3ws7w6q29g2c
+export pkg=package_tdx_2_1ph34rv8qd3vxjptrvm0dpr3xw3mzwwvzx024gmahe5xm5ejpqq7dtl
 export account=$admin_account
 export ticket_price=10
 export payment_window_epochs=8
@@ -13,7 +13,7 @@ export domain_name="@lighter.im"
 export relay_pub_key="a5bc3d9296bda1e52f96bf0a65238998877dbddb0703bd37ef1f18a6ffce458a"
 
 ./manifest/replace_holder.sh ./manifest/instantiate.rtm
-export component=component_tdx_2_1cqtx2lvk9saaxcah8qzazp4gl43mlte8fjgn7n0g97fjtgnlqve59w
+export component=component_tdx_2_1czcutq7stcpqzr5px2fyrzusq29vn32t0psss2mputv5guvjxf24ku
 export xrd="resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc"
 
 export amount=10
@@ -27,7 +27,14 @@ export account=$p2
 export dns_name=dust2@lighter.im
 ./manifest/replace_holder.sh ./manifest/take_ticket.rtm
 
-export ticket_addr=resource_tdx_2_1n2wuej8rtw6s66f7pl0fx048ak8elugp2tqv7ljyyt5alht9e5xu88
+{"xrd":{"dust": 1000}}
+
+xrd --> kv_$addr {nft_id: dddd}
+{"dust", "dust2"....}
+
+data: $kv_addr, $seller("dust2") --->
+
+export ticket_addr=resource_tdx_2_1nfeaqyegaccusue7fn5xs3suh8pwevs79evjhlmns2phvh7gtd7gk0
 export seller=$p2
 export seller_id="<dust2_lighter_im>"
 export seller_fee=40
@@ -43,65 +50,8 @@ export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr 
 ./manifest/replace_holder.sh ./manifest/create_escrow.rtm
 
 
-
 ./manifest/replace_holder.sh ./manifest/buyer_paid.rtm
 
 
 ./manifest/replace_holder.sh ./manifest/seller_release.rtm
-
-
-
-
-====
-channel list---group
-
-channel --> intent list
-
-
-take_intent -->
-
-
-
-UI/UX --> nostr relay(intent, session, user)|dapp backend ---> scrypto ----> chain--watcher---|
-                DB <--------------------------------------------------------------------------|
-
-
-Yuepeng:
-
-1. nostr relay: protocol OR app? 
-type & tag ==> nostr protocol
-
-2. 前端 --> 逻辑处理，channel()
-
-
-# nostr relay
-## Intent
-###  库存系统 
-* 意向中包含数量。
-* 被take时，maker的意向需要减库存
-* 被cancel时，maker意向需要加库存
-
-## Trade(会话)
-### 哪个链
-### 创建私有会话(参与者共有，其它人不能查看，不能加入（除了系统))
-### 接收用户（含系统）推送消息到会话。
-
-## 信用或统计数据
-* 用户信息(nft 静态数据&信用数据， 交易中数据) request/response
-
-
-# radix dapp backend --> python
-## 用户名校验，重复？符合regex [a-zA-Z0-9_]* 传过来"xxxx" 最后：xxxx@lighter.im --》 dsn
-## trade Merkle tree signature gen
-## 买家签名消息 & 操作 （比如中继）
-## 链上数据查询 （fronted OR backend），比如买家可用余额，卖家托管金额。
-    * 使用资源或资产地址
-
-# radix watcher  ---> python
-## 持久化dapp用户(同时关联nostr pub key用户)
-## 持久化escrow_state_history. 开启/结束trade.
-## 生成统计数据或汇总信用数据，尤其是周，4周数据。
-* trade, cancel, count & amount
-
-
 
