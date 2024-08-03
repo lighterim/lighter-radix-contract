@@ -16,6 +16,10 @@ pub struct TicketData {
     pub volume_as_buyer: Decimal,
     #[mutable]
     pub volume_as_seller: Decimal,
+    #[mutable]
+    pub avg_release_epochs: Decimal,
+    #[mutable]
+    pub avg_paid_epochs: Decimal,
     
     pub deposit_amount: Decimal,
     // Amount required per transaction (deposit_amount/deposit_price = number of orders available for participation)

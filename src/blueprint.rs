@@ -170,7 +170,7 @@ mod lighter_radix{
 
         ///
         /// take an Lighter NFT with a nostr public key.
-        pub fn take_ticket(&mut self, nostr_nip_05: String, mut bucket: Bucket) -> (Bucket, Bucket){
+        pub fn take_ticket(&mut self, nostr_nip_05: String, nostr_pub_key: String, mut bucket: Bucket) -> (Bucket, Bucket){
             assert!(bucket.resource_address() == XRD && bucket.amount() >= self.channel_price, "unknow resource bucket or invalid amount");
             // assert!(true, "nostr public key invalid");
 
@@ -190,8 +190,10 @@ mod lighter_radix{
                 cancel_as_seller: 0,
                 completed_as_buyer: 0,
                 completed_as_seller: 0,
-                volume_as_buyer: Decimal::ZERO,
-                volume_as_seller: Decimal::ZERO,
+                volume_as_buyer: Decimal::zero(),
+                volume_as_seller: Decimal::zero(),
+                avg_paid_epochs: Decimal::zero(),
+                avg_release_epochs: Decimal::zero(),
                 channel_price: price,
                 deposit_amount
             };
@@ -209,6 +211,7 @@ mod lighter_radix{
             Runtime::emit_event(TakeTicketEvent{
                 channel_count: processed_order_cnt,
                 nostr_nip_05: nostr_nip_05.clone(),
+                nostr_pub_key,
                 nft_id
             });
             (ticket,bucket)
@@ -224,13 +227,81 @@ mod lighter_radix{
             self.ticket_res_mgr.update_non_fungible_data(ticket_id, "pending_order_ids", pending_order_ids);
         }
 
-        fn remove_trade_done(& self, ticket_id: &NonFungibleLocalId, trade_id: u64){
+        fn update_ticket(&self, ticket_id: &NonFungibleLocalId, trade_id: u64){
             let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(ticket_id);
+            // pending order id
             let mut pending_order_ids = ticket.pending_order_ids;
             if let Ok(index) = pending_order_ids.binary_search(&trade_id){
                 pending_order_ids.remove(index);
                 self.ticket_res_mgr.update_non_fungible_data(ticket_id, "pending_order_ids", pending_order_ids);
             }
+        }
+
+        fn update_buyer_when_cancel(&self, buyer: &NonFungibleLocalId, trade_id: u64){
+            let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(buyer);
+            // pending order id
+            let mut pending_order_ids = ticket.pending_order_ids;
+            if let Ok(index) = pending_order_ids.binary_search(&trade_id){
+                pending_order_ids.remove(index);
+                self.ticket_res_mgr.update_non_fungible_data(buyer, "pending_order_ids", pending_order_ids);
+            }
+
+            self.ticket_res_mgr.update_non_fungible_data(buyer, "cancel_as_buyer", ticket.cancel_as_buyer+1);
+        }
+
+        fn update_buyer(&self, buyer: &NonFungibleLocalId, trade_id: u64, paid_epochs: u64){
+            let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(buyer);
+            // pending order id
+            let mut pending_order_ids = ticket.pending_order_ids;
+            if let Ok(index) = pending_order_ids.binary_search(&trade_id){
+                pending_order_ids.remove(index);
+                self.ticket_res_mgr.update_non_fungible_data(buyer, "pending_order_ids", pending_order_ids);
+            }
+
+            // paid epochs
+            let completed_as_buyer = ticket.completed_as_buyer;
+            let avg_paid_epochs = Decimal::from(ticket.avg_paid_epochs).checked_mul(completed_as_buyer).and_then(
+                |value| value.checked_add(paid_epochs).and_then(
+                    |sum| sum.checked_div(
+                        Decimal::from(completed_as_buyer+1).checked_round(6, RoundingMode::ToNearestMidpointToEven).unwrap()
+                    )
+                )
+            ).unwrap_or(ticket.avg_paid_epochs);
+            self.ticket_res_mgr.update_non_fungible_data(buyer, "avg_paid_epochs", avg_paid_epochs);
+            self.ticket_res_mgr.update_non_fungible_data(buyer, "completed_as_buyer", completed_as_buyer+1);
+        }
+
+        fn update_seller(&self, seller: &NonFungibleLocalId, trade_id: u64, release_epochs: u64){
+            let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(seller);
+            // pending order id
+            let mut pending_order_ids = ticket.pending_order_ids;
+            if let Ok(index) = pending_order_ids.binary_search(&trade_id){
+                pending_order_ids.remove(index);
+                self.ticket_res_mgr.update_non_fungible_data(seller, "pending_order_ids", pending_order_ids);
+            }
+
+            //release epochs
+            let completed_as_seller = ticket.completed_as_seller;
+            let avg_release_epochs = Decimal::from(ticket.avg_release_epochs).checked_mul(completed_as_seller).and_then(
+                |value| value.checked_add(release_epochs).and_then(
+                    |sum| sum.checked_div(
+                        Decimal::from(completed_as_seller+1).checked_round(6, RoundingMode::ToNearestMidpointToEven).unwrap()
+                    )
+                )
+            ).unwrap_or(ticket.avg_paid_epochs);
+            self.ticket_res_mgr.update_non_fungible_data(seller, "avg_paid_epochs", avg_release_epochs);
+            self.ticket_res_mgr.update_non_fungible_data(seller, "completed_as_seller", completed_as_seller+1);
+            
+        }
+
+        fn update_ticket_when_release(& self, trade_id: u64, buyer: &NonFungibleLocalId, paid_epochs: u64, seller: &NonFungibleLocalId, release_epochs: u64){
+            self.update_buyer(buyer, trade_id, paid_epochs);
+            self.update_seller(seller, trade_id, release_epochs);
+        }
+
+        fn update_ticket_when_cancel(&self, trade_id: u64, buyer: &NonFungibleLocalId, seller: &NonFungibleLocalId){
+            self.update_ticket(seller, trade_id);
+            self.update_buyer_when_cancel(buyer, trade_id);
         }
 
         fn increase_buyer_credit(&mut self, token_addr: ResourceAddress, credit_amount: Decimal, buyer: &NonFungibleLocalId){
@@ -326,7 +397,8 @@ mod lighter_radix{
 
             // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             let escrow_data = EscrowData{
-                next_act_epoch: Runtime::current_epoch().number() + (self.payment_window_epochs as u64),
+                last_epoch: Runtime::current_epoch().number(),
+                paid_epochs: 0u64,
                 request_cancel_epoch: 0u64,
                 instruction: Instruction::Escrowed,
                 gas_spent_by_relayer: Decimal::ZERO
@@ -376,9 +448,11 @@ mod lighter_radix{
             // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
             let mut escrow_data = self.escrow_map.get_mut(&h).unwrap();
             assert!(escrow_data.instruction == Instruction::Escrowed || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to BuyerPaid!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
-            // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::BuyerPaid);
+            let current_epoch = Runtime::current_epoch().number();
+            escrow_data.paid_epochs = current_epoch - escrow_data.last_epoch;
             escrow_data.instruction = Instruction::BuyerPaid;
-            escrow_data.next_act_epoch = Runtime::current_epoch().number() + (self.payment_window_epochs as u64);
+            escrow_data.last_epoch = current_epoch;
+
             Runtime::emit_event(BuyerPaidEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: h.to_string(),
@@ -391,7 +465,7 @@ mod lighter_radix{
                 buyer_fee,
                 seller_fee
             });
-            //TODO: 更新付款时间 nft
+            
             buyer_ticket
         }
 
@@ -424,7 +498,7 @@ mod lighter_radix{
                 || escrow_data.instruction == Instruction::BuyerPaid, "current status not support turn to BuyerCancelled!");
             // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::BuyerPaid);
             escrow_data.instruction = Instruction::BuyerCancelled;
-            escrow_data.next_act_epoch = Runtime::current_epoch().number() + (self.payment_window_epochs as u64);
+            escrow_data.last_epoch = Runtime::current_epoch().number();
             Runtime::emit_event(BuyerPaidEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: h.to_string(),
@@ -467,17 +541,11 @@ mod lighter_radix{
             let actual_credit = get_net_by_bp(volume, buyer_fee);
             self.reduce_seller_escrow(&token_addr, volume, &seller);
             self.increase_buyer_credit(token_addr, actual_credit, &buyer);
-            self.remove_trade_done(&seller, trade_id);
-            self.remove_trade_done(&buyer, trade_id);
+            
+            let (paid_epochs, release_epochs) = self.update_escrow_when_release(&h);
+            self.update_ticket_when_release(trade_id, &buyer, paid_epochs, &seller, release_epochs);
+            
 
-            // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
-            let mut escrow_data = self.escrow_map.get_mut(&h).unwrap();
-            assert!(escrow_data.instruction == Instruction::BuyerPaid || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to Release!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
-            // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::Release);
-            escrow_data.instruction = Instruction::Released;
-            escrow_data.next_act_epoch = 0u64;
-            
-            
             Runtime::emit_event(SellerReleasedEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: h.to_string(),
@@ -492,6 +560,17 @@ mod lighter_radix{
                 seller_fee
             });
             seller_ticket
+        }
+
+        fn update_escrow_when_release(&mut self, h: &Hash) -> (u64, u64){
+            // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
+            let mut escrow_data = self.escrow_map.get_mut(h).unwrap();
+            assert!(escrow_data.instruction == Instruction::BuyerPaid || escrow_data.instruction == Instruction::SellerRequestCancel, "current status not support turn to Release!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::Release);
+            let release_epochs = Runtime::current_epoch().number() - escrow_data.last_epoch;
+            escrow_data.instruction = Instruction::Released;
+            escrow_data.last_epoch = 0u64;
+            (escrow_data.paid_epochs, release_epochs)
         }
 
         //TEMP
@@ -553,9 +632,8 @@ mod lighter_radix{
             // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
             let mut escrow_data = self.escrow_map.get_mut(&h).unwrap();
             let current_epoch = Runtime::current_epoch().number();
-            assert!(escrow_data.instruction == Instruction::Escrowed && escrow_data.next_act_epoch <= current_epoch , "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            assert!(escrow_data.instruction == Instruction::Escrowed && escrow_data.last_epoch + (self.payment_window_epochs as u64) <= current_epoch , "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
             escrow_data.request_cancel_epoch = current_epoch;
-            escrow_data.next_act_epoch = current_epoch + (self.payment_window_epochs as u64);
             escrow_data.instruction = Instruction::SellerRequestCancel;
             // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::SellerRequestCancel);
             // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "cancel_after_epoch_by_seller", current_epoch + (self.payment_window_epochs as u64));
@@ -595,16 +673,20 @@ mod lighter_radix{
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
             assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+
+            self.update_ticket_when_cancel(trade_id, &buyer, &seller);
             
             // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
             let mut escrow_data = self.escrow_map.get_mut(&h).unwrap();
             let current_epoch = Runtime::current_epoch().number();
-            assert!(escrow_data.instruction == Instruction::SellerRequestCancel &&
-                escrow_data.request_cancel_epoch + (self.payment_window_epochs as u64) <= current_epoch,
-                 "current status not support turn to SellerCancel!");    //"current status:{} not support turn to BuyerPaid!", escrow_data.instruction);
+            let timeout = escrow_data.instruction == Instruction::SellerRequestCancel && escrow_data.request_cancel_epoch + (self.payment_window_epochs as u64) <= current_epoch;
+            assert!(timeout || escrow_data.instruction == Instruction::BuyerCancelled, "current status not support turn to SellerCancel!");
             escrow_data.instruction = Instruction::SellerCancelled;
-            // self.escrow_res_mgr.update_non_fungible_data(&escrow_nft_id, "instruction", Instruction::SellerCancel);
+            escrow_data.last_epoch = 0u64;
+            
+            
+            
             let total = get_total_by_bp(volume, seller_fee);
             let mut vault = self.escrow_vault_map.get_mut(&token_addr).unwrap();
             let escrow_bucket = vault.take_advanced(total, WithdrawStrategy::Rounded(RoundingMode::ToNegativeInfinity));
@@ -619,6 +701,7 @@ mod lighter_radix{
                     //TODO: remove
                 }
             }
+            
 
             Runtime::emit_event(SellerCancelEvent{
                 payment_method:payment_method.clone(),
@@ -640,6 +723,7 @@ mod lighter_radix{
 #[derive(ScryptoSbor, ScryptoEvent)]
 struct TakeTicketEvent{
     nostr_nip_05: String,
+    nostr_pub_key: String,
     nft_id: NonFungibleLocalId,
     channel_count: Decimal
 } 

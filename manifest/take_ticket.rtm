@@ -18,6 +18,7 @@ CALL_METHOD
     Address("${component}")
     "take_ticket"
     "${dns_name}"
+    "${nostr_pub_key}"
     Bucket("bucket1")
 ;
 CALL_METHOD

@@ -51,6 +51,7 @@ resim set-default-account $p1 $p1_priv $p1_badge
 export amount=10
 export account=$p1
 export dns_name=dust@lighter.im
+export nostr_pub_key=npub180czphasst2k8035u9nuk4wdmt9eppme9l03tp5j43qck7s8emwqr8agc0
 export xrd="resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3"
 result=$(resim run < ./manifest/replace_holder.sh ./manifest/take_ticket.rtm)
 export p1_ticket=$(echo $result | grep "ResAddr: " | awk -F "ResAddr: " '{if (NR==3) print $2}' | awk -F " " '{print $1}')
@@ -60,6 +61,7 @@ resim set-default-account $p2 $p2_priv $p2_badge
 export amount=10
 export account=$p2
 export dns_name=dust2@lighter.im
+export nostr_pub_key=npub180czphasst2k8035u9nuk4wdmt9eppme9l03tp5j43qck7s8emwqr8agc1
 export xrd="resource_sim1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxakj8n3"
 result=$(resim run < ./manifest/replace_holder.sh ./manifest/take_ticket.rtm)
 export p2_ticket=$(echo $result | grep "ResAddr: " | awk -F "ResAddr: " '{if (NR==3) print $2}' | awk -F " " '{print $1}')
