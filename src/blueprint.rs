@@ -4,7 +4,7 @@ use crate::escrow::*;
 use crate::utils::*;
 
 #[blueprint]
-#[events(TakeTicketEvent, CreateEscrowEvent, BuyerPaidEvent, SellerReleasedEvent, SellerRequestCancelEvent,WithdrawByCreditEvent)]
+#[events(TakeTicketEvent, CreateEscrowEvent, BuyerPaidEvent, SellerReleasedEvent, SellerRequestCancelEvent, SellerCancelEvent, WithdrawByCreditEvent)]
 mod lighter_radix{
 
     enable_method_auth! {
