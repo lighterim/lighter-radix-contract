@@ -34,8 +34,11 @@ CALL_METHOD
     Decimal("${buyer_fee}")
     Decimal("${price}")
     Decimal("${volume}")
+    "${currency}"
+    Decimal("${usd_rate}")
     Decimal("${seller_fee}")
     "${payment_method}"
+    "${payee}"
     "${signature}"
     Bucket("bucket1")
     Bucket("bucket2")

@@ -249,7 +249,7 @@ mod lighter_radix{
             self.ticket_res_mgr.update_non_fungible_data(buyer, "cancel_as_buyer", ticket.cancel_as_buyer+1);
         }
 
-        fn update_buyer(&self, buyer: &NonFungibleLocalId, trade_id: u64, paid_epochs: u64){
+        fn update_buyer(&self, buyer: &NonFungibleLocalId, trade_id: u64, amount:Decimal, paid_epochs: u64){
             let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(buyer);
             // pending order id
             let mut pending_order_ids = ticket.pending_order_ids;
@@ -260,6 +260,7 @@ mod lighter_radix{
 
             // paid epochs
             let completed_as_buyer = ticket.completed_as_buyer;
+            let trade_amount = ticket.volume_as_buyer;
             let avg_paid_epochs = Decimal::from(ticket.avg_paid_epochs).checked_mul(completed_as_buyer).and_then(
                 |value| value.checked_add(paid_epochs).and_then(
                     |sum| sum.checked_div(
@@ -269,9 +270,10 @@ mod lighter_radix{
             ).unwrap_or(ticket.avg_paid_epochs);
             self.ticket_res_mgr.update_non_fungible_data(buyer, "avg_paid_epochs", avg_paid_epochs);
             self.ticket_res_mgr.update_non_fungible_data(buyer, "completed_as_buyer", completed_as_buyer+1);
+            self.ticket_res_mgr.update_non_fungible_data(buyer, "volume_as_buyer", trade_amount.checked_add(amount).unwrap());
         }
 
-        fn update_seller(&self, seller: &NonFungibleLocalId, trade_id: u64, release_epochs: u64){
+        fn update_seller(&self, seller: &NonFungibleLocalId, trade_id: u64, amount: Decimal, release_epochs: u64){
             let ticket = self.ticket_res_mgr.get_non_fungible_data::<TicketData>(seller);
             // pending order id
             let mut pending_order_ids = ticket.pending_order_ids;
@@ -282,6 +284,7 @@ mod lighter_radix{
 
             //release epochs
             let completed_as_seller = ticket.completed_as_seller;
+            let trade_amount = ticket.volume_as_seller;
             let avg_release_epochs = Decimal::from(ticket.avg_release_epochs).checked_mul(completed_as_seller).and_then(
                 |value| value.checked_add(release_epochs).and_then(
                     |sum| sum.checked_div(
@@ -291,12 +294,14 @@ mod lighter_radix{
             ).unwrap_or(ticket.avg_paid_epochs);
             self.ticket_res_mgr.update_non_fungible_data(seller, "avg_paid_epochs", avg_release_epochs);
             self.ticket_res_mgr.update_non_fungible_data(seller, "completed_as_seller", completed_as_seller+1);
+            self.ticket_res_mgr.update_non_fungible_data(seller, "volume_as_seller", trade_amount.checked_add(amount).unwrap());
             
         }
 
-        fn update_ticket_when_release(& self, trade_id: u64, buyer: &NonFungibleLocalId, paid_epochs: u64, seller: &NonFungibleLocalId, release_epochs: u64){
-            self.update_buyer(buyer, trade_id, paid_epochs);
-            self.update_seller(seller, trade_id, release_epochs);
+        fn update_ticket_when_release(& self, trade_id: u64, amount: Decimal, buyer: &NonFungibleLocalId, paid_epochs: u64, seller: &NonFungibleLocalId, release_epochs: u64){
+            
+            self.update_buyer(buyer, trade_id, amount, paid_epochs);
+            self.update_seller(seller, trade_id, amount, release_epochs);
         }
 
         fn update_ticket_when_cancel(&self, trade_id: u64, buyer: &NonFungibleLocalId, seller: &NonFungibleLocalId){
@@ -360,10 +365,13 @@ mod lighter_radix{
             trade_id: u64,
             buyer: NonFungibleLocalId,
             buyer_fee: Decimal,
-            price: Decimal, 
+            price: Decimal,
             volume: Decimal,
+            currency: String,
+            usd_rate: Decimal,
             seller_fee: Decimal,
             payment_method: String,
+            payee: String,
             signature: String,
             seller_ticket: NonFungibleBucket,
             mut token_bucket: Bucket
@@ -374,11 +382,11 @@ mod lighter_radix{
             let token_addr = token_bucket.resource_address();
             let seller = seller_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
-            let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
+            let args = format!("{},{},{},{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, currency.clone(), usd_rate, buyer_fee, seller_fee, payment_method.clone(), payee.clone());
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data.{}|{}", &args, &signature);
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data.{}|{}", &args, &signature);
             
             let total = get_total_by_bp(volume, seller_fee);
             assert!(amount >= total, "escrow amount less than required.{}", total);
@@ -410,12 +418,15 @@ mod lighter_radix{
 
             Runtime::emit_event(CreateEscrowEvent{
                 payment_method:payment_method.clone(),
+                currency: currency.clone(),
                 escrow_id: h.to_string(),
+                amount,
                 seller,
                 token_addr,
                 trade_id,
                 buyer,
                 price,
+                usd_rate,
                 volume,
                 buyer_fee,
                 seller_fee
@@ -428,21 +439,24 @@ mod lighter_radix{
             seller: NonFungibleLocalId,
             token_addr: ResourceAddress,
             volume: Decimal,
-            price: Decimal, 
+            price: Decimal,
+            currency: String,
+            usd_rate: Decimal,
             seller_fee: Decimal,
             buyer_fee: Decimal,
             payment_method: String,
+            payee: String,
             signature: String,
             buyer_ticket: NonFungibleBucket
         ) -> NonFungibleBucket {
             assert!(buyer_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
             let buyer = buyer_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
-            let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
+            let args = format!("{},{},{},{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, currency.clone(), usd_rate, buyer_fee, seller_fee, payment_method.clone(), payee.clone());
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data:{} | {}", &args, &signature);
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data:{} | {}", &args, &signature);
             
             // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
@@ -455,12 +469,14 @@ mod lighter_radix{
 
             Runtime::emit_event(BuyerPaidEvent{
                 payment_method:payment_method.clone(),
+                currency: currency.clone(),
                 escrow_id: h.to_string(),
                 token_addr,
                 trade_id,
                 buyer,
                 seller,
                 price,
+                usd_rate,
                 volume,
                 buyer_fee,
                 seller_fee
@@ -474,21 +490,24 @@ mod lighter_radix{
             seller: NonFungibleLocalId,
             token_addr: ResourceAddress,
             volume: Decimal,
-            price: Decimal, 
+            price: Decimal,
+            currency: String,
+            usd_rate: Decimal,
             seller_fee: Decimal,
             buyer_fee: Decimal,
             payment_method: String,
+            payee: String,
             signature: String,
             buyer_ticket: NonFungibleBucket
         ) -> NonFungibleBucket{
             assert!(buyer_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
             let buyer = buyer_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
-            let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
+            let args = format!("{},{},{},{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, currency.clone(), usd_rate, buyer_fee, seller_fee, payment_method.clone(), payee.clone());
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data:{} | {}", &args, &signature);
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "invalid escrow data:{} | {}", &args, &signature);
             
             // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
@@ -501,6 +520,7 @@ mod lighter_radix{
             escrow_data.last_epoch = Runtime::current_epoch().number();
             Runtime::emit_event(BuyerPaidEvent{
                 payment_method:payment_method.clone(),
+                currency: currency.clone(),
                 escrow_id: h.to_string(),
                 token_addr,
                 trade_id,
@@ -508,6 +528,7 @@ mod lighter_radix{
                 seller,
                 price,
                 volume,
+                usd_rate,
                 buyer_fee,
                 seller_fee
             });
@@ -520,10 +541,13 @@ mod lighter_radix{
             buyer: NonFungibleLocalId,
             token_addr: ResourceAddress,
             volume: Decimal,
-            price: Decimal, 
+            price: Decimal,
+            currency: String,
+            usd_rate: Decimal,
             buyer_fee: Decimal,
             seller_fee: Decimal,
             payment_method: String,
+            payee: String,
             signature: String,
             seller_ticket: NonFungibleBucket
         ) -> NonFungibleBucket{
@@ -531,11 +555,11 @@ mod lighter_radix{
 
             let seller = seller_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
-            let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
+            let args = format!("{},{},{},{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, currency.clone(), usd_rate, buyer_fee, seller_fee, payment_method.clone(), payee.clone());
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             
             let actual_credit = get_net_by_bp(volume, buyer_fee);
@@ -543,12 +567,16 @@ mod lighter_radix{
             self.increase_buyer_credit(token_addr, actual_credit, &buyer);
             
             let (paid_epochs, release_epochs) = self.update_escrow_when_release(&h);
-            self.update_ticket_when_release(trade_id, &buyer, paid_epochs, &seller, release_epochs);
+            let usd_amount = price.checked_mul(volume).and_then(
+                |currency_amount| currency_amount.checked_mul(usd_rate)
+            ).unwrap_or(Decimal::zero());
+            self.update_ticket_when_release(trade_id, usd_amount, &buyer, paid_epochs, &seller, release_epochs);
             
 
             Runtime::emit_event(SellerReleasedEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: h.to_string(),
+                currency: currency.clone(),
                 buyer_credit: actual_credit,
                 token_addr,
                 trade_id,
@@ -556,6 +584,7 @@ mod lighter_radix{
                 seller,
                 price,
                 volume,
+                usd_rate,
                 buyer_fee,
                 seller_fee
             });
@@ -613,20 +642,23 @@ mod lighter_radix{
             token_addr: ResourceAddress,
             volume: Decimal,
             price: Decimal,
+            currency: String,
+            usd_rate: Decimal,
             buyer_fee: Decimal,
             seller_fee: Decimal,
             payment_method: String,
+            payee: String,
             signature: String,
             seller_ticket: NonFungibleBucket
         ) -> NonFungibleBucket{
             assert!(seller_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
             let seller = seller_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
-            let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
+            let args = format!("{},{},{},{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, currency.clone(), usd_rate, buyer_fee, seller_fee, payment_method.clone(), payee.clone());
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
             
             // let escrow_nft_id = NonFungibleLocalId::bytes(h.as_bytes()).unwrap();
             // let escrow_data = self.escrow_res_mgr.get_non_fungible_data::<EscrowData>(&escrow_nft_id);
@@ -659,20 +691,23 @@ mod lighter_radix{
             token_addr: ResourceAddress,
             volume: Decimal,
             price: Decimal, 
+            currency: String,
+            usd_rate: Decimal,
             buyer_fee: Decimal,
             seller_fee: Decimal,
             payment_method: String,
+            payee: String,
             signature: String,
             seller_ticket: NonFungibleBucket
         ) -> (NonFungibleBucket, Bucket){
             assert!(seller_ticket.resource_address() == self.ticket_res_mgr.address(), "invalid ticket.");
             let seller = seller_ticket.non_fungible_local_id();
             let str_res_addr = Runtime::bech32_encode_address(token_addr);
-            let args = format!("{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, buyer_fee, seller_fee, payment_method.clone());
+            let args = format!("{},{},{},{},{},{},{},{},{},{},{},{}", trade_id, buyer, seller, str_res_addr, volume, price, currency.clone(), usd_rate, buyer_fee, seller_fee, payment_method.clone(), payee.clone());
             info!("args:{}", &args);
             let h =  keccak256_hash(args.clone());
             let sig = Ed25519Signature::from_str(&signature).unwrap();
-            assert!(true || verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
+            assert!(verify_ed25519(&h, &self.relay_public_key, &sig), "illegal escrow data");
 
             self.update_ticket_when_cancel(trade_id, &buyer, &seller);
             
@@ -706,6 +741,7 @@ mod lighter_radix{
             Runtime::emit_event(SellerCancelEvent{
                 payment_method:payment_method.clone(),
                 escrow_id: h.to_string(),
+                amount: escrow_bucket.amount(),
                 token_addr,
                 trade_id,
                 buyer,
@@ -735,10 +771,13 @@ struct CreateEscrowEvent{
     seller: NonFungibleLocalId,
     token_addr: ResourceAddress,
     price: Decimal,
+    currency: String,
+    usd_rate: Decimal,
     volume: Decimal,
     buyer_fee: Decimal,
     seller_fee: Decimal,
     payment_method: String,
+    amount: Decimal,
     escrow_id: String
 }
 
@@ -750,6 +789,8 @@ struct BuyerPaidEvent{
     token_addr: ResourceAddress,
     price: Decimal,
     volume: Decimal,
+    currency: String,
+    usd_rate: Decimal,
     buyer_fee: Decimal,
     seller_fee: Decimal,
     payment_method: String,
@@ -764,6 +805,8 @@ struct SellerReleasedEvent{
     token_addr: ResourceAddress,
     price: Decimal,
     volume: Decimal,
+    currency: String,
+    usd_rate: Decimal,
     buyer_credit: Decimal,
     buyer_fee: Decimal,
     seller_fee: Decimal,
@@ -795,6 +838,7 @@ struct SellerCancelEvent{
     buyer_fee: Decimal,
     seller_fee: Decimal,
     payment_method: String,
+    amount: Decimal,
     escrow_id: String
 }
 

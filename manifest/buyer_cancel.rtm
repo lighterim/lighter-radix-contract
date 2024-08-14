@@ -23,9 +23,12 @@ CALL_METHOD
     Address("${xrd}")
     Decimal("${volume}")
     Decimal("${price}")
+    "${currency}"
+    Decimal("${usd_rate}")
     Decimal("${seller_fee}")
     Decimal("${buyer_fee}")
     "${payment_method}"
+    "${payee}"
     "${signature}"
     Bucket("bucket1")
 ;
