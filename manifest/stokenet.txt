@@ -5,16 +5,17 @@ export p3=account_tdx_2_129v2sa7652vlmwr5z4fyushc3kpvygzvu6glyvwvvmd349rg9xsz5p
 
 
 
-export pkg=package_tdx_2_1phhqzeq9fw2ej5606ata9ufn3vg33akqenajudyfu7w4lzklh6zter
+export pkg=package_tdx_2_1pkfytau75dy8vy935sq2z4xxlkcay7qqhm4y8078nm02kp520hvqzu
 export account=$admin_account
 export ticket_price=10
-export payment_window_epochs=8
+export payment_window_epochs=2
 export domain_name="@lighter.im"
 export relay_pub_key="a5bc3d9296bda1e52f96bf0a65238998877dbddb0703bd37ef1f18a6ffce458a"
 
 ./manifest/replace_holder.sh ./manifest/instantiate.rtm
-export component=component_tdx_2_1cpslmnlxwnc3w5a0er7npc982myqjhzxmj4spkscp9w0ve08rq85wf
+export component=component_tdx_2_1cqx4p3kkamtypcpflnhdkrq4kv3p0c23nw649av05ygl2sxu5lpw7u
 export xrd="resource_tdx_2_1tknxxxxxxxxxradxrdxxxxxxxxx009923554798xxxxxxxxxtfd2jc"
+export ticket_addr=resource_tdx_2_1n25dfm9d0mkder59tqc3dyv8xs96a9vkk0mkh6ytu9cg2tcss3lrr3
 
 export amount=10
 export account=$p1
@@ -30,7 +31,6 @@ export nostr_pub_key=npub180czphasst2k8035u9nuk4wdmt9eppme9l03tp5j43qck7s8emwqr8
 ./manifest/replace_holder.sh ./manifest/take_ticket.rtm
 
 
-export ticket_addr=resource_tdx_2_1nt3znkwu96h7gd7srgld0wn2kycvnek0ga738v7jdxjjxg732wjgn8
 export seller=$p2
 export seller_id="<dust2_lighter_im>"
 export seller_fee=40
@@ -43,7 +43,10 @@ export trade_id=1
 export price=0.03
 export payment_method=alipay
 export res_addr=$xrd
-export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $buyer_fee $seller_fee $payment_method)
+export currency=USD
+export usd_rate=1.0
+export payee=dust_lee@189.cn
+export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $currency $usd_rate $buyer_fee $seller_fee $payment_method $payee)
 ./manifest/replace_holder.sh ./manifest/create_escrow.rtm
 
 
@@ -60,3 +63,9 @@ export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr 
 ./manifest/replace_holder.sh ./manifest/create_escrow.rtm
 
 ./manifest/replace_holder.sh ./manifest/buyer_cancel.rtm
+
+./manifest/replace_holder.sh ./manifest/seller_cancel.rtm
+
+
+./manifest/replace_holder.sh ./manifest/request_cancel.rtm
+./manifest/replace_holder.sh ./manifest/seller_cancel.rtm

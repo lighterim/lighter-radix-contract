@@ -2,6 +2,7 @@
 /lib
 /target
 /coverage
+__pycache__/
 *.lock
 *.key
 *.cfg

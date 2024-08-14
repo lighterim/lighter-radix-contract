@@ -77,10 +77,13 @@ export amount=1004
 export volume=1000
 export trade_id=1
 export price=0.03
+export currency=CNY
+export usd_rate=7.21
 export payment_method=alipay
+export payee=dust_lee@189.cn
 export res_addr=$xrd
-export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $buyer_fee $seller_fee $payment_method)
-echo "$trade_id,$buyer_id,$seller_id,$res_addr,$volume,$price,$buyer_fee,$seller_fee,$payment_method"
+export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $currency $usd_rate $buyer_fee $seller_fee $payment_method $payee)
+echo "$trade_id,$buyer_id,$seller_id,$res_addr,$volume,$price,$currency,$usd_rate,$buyer_fee,$seller_fee,$payment_method,$payee"
 result=$(resim run <./manifest/replace_holder.sh ./manifest/create_escrow.rtm)
 
 resim set-default-account $p1 $p1_priv $p1_badge
@@ -93,11 +96,24 @@ resim set-default-account $p1 $p1_priv $p1_badge
 export amount=998
 result=$(resim run <./manifest/replace_holder.sh ./manifest/buyer_withdraw.rtm)
 
-
+resim set-default-account $p2 $p2_priv $p2_badge
+export trade_id=2
+export amount=2008
+export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $currency $usd_rate $buyer_fee $seller_fee $payment_method $payee)
+echo "$trade_id,$buyer_id,$seller_id,$res_addr,$volume,$price,$currency,$usd_rate,$buyer_fee,$seller_fee,$payment_method,$payee"
+result=$(resim run <./manifest/replace_holder.sh ./manifest/create_escrow.rtm)
 resim set-default-account $p1 $p1_priv $p1_badge
 result=$(resim run <./manifest/replace_holder.sh ./manifest/buyer_cancel.rtm)
 resim set-default-account $p2 $p2_priv $p2_badge
 result=$(resim run <./manifest/replace_holder.sh ./manifest/seller_cancel.rtm)
+
+
+resim set-default-account $p2 $p2_priv $p2_badge
+export trade_id=3
+export amount=2008
+export signature=$(python3 sig_util.py $trade_id $buyer_id $seller_id $res_addr $volume $price $currency $usd_rate $buyer_fee $seller_fee $payment_method $payee)
+echo "$trade_id,$buyer_id,$seller_id,$res_addr,$volume,$price,$currency,$usd_rate,$buyer_fee,$seller_fee,$payment_method,$payee"
+result=$(resim run <./manifest/replace_holder.sh ./manifest/create_escrow.rtm)
 
 resim set-current-epoch 10
 result=$(resim run <./manifest/replace_holder.sh ./manifest/request_cancel.rtm)
